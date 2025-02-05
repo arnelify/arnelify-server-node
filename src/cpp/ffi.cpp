@@ -188,9 +188,11 @@ void server_set_handler(const char *(*cHandler)(const char *),
       }
     }
 
-    if (json.isMember("filePath") && json["filePath"].isString() &&
+    if (json.isMember("filePath") && json.isMember("isStatic") &&
+        json["filePath"].isString() && json["isStatic"].isBool() &&
         !json["filePath"].asString().empty()) {
-      res->setFile(json["filePath"].asString());
+
+      res->setFile(json["filePath"].asString(), json["isStatic"].asBool());
       res->end();
       return;
     }
