@@ -1,0 +1,32 @@
+{
+  "name": "arnelify-server",
+  "version": "0.6.0",
+  "description": "Minimalistic NodeJS (Bun) addon which is a powerful http-server written in C and C++.",
+  "keywords": [
+    "arnelify",
+    "arnelify-server",
+    "arnelify-server-node",
+    "arnelify server"
+  ],
+  "author": "Arnelify",
+  "license": "MIT",
+  "main": "src/index.ts",
+  "scripts": {
+    "build": "clear && node-gyp configure && node-gyp build",
+    "tests": "clear && src/tests/index.ts"
+  },
+  "dependencies": {
+    "node-addon-api": "^8.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.12.0"
+  },
+  "homepage": "https://github.com/arnelify/arnelify-pod-node#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arnelify/arnelify-pod-node.git"
+  },
+  "bugs": {
+    "url": "https://github.com/arnelify/arnelify-pod-node/issues"
+  }
+}

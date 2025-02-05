@@ -1,0 +1,12 @@
+services:
+  node:
+    container_name: node
+    build:
+      context: .
+      dockerfile: node.dockerfile
+    volumes:
+      - ./src:/var/www/node/src
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    tty: true
