@@ -14,6 +14,7 @@ COPY ./LICENSE ./LICENSE
 COPY ./package.json ./package.json
 COPY ./README.md ./README.md
 COPY ./tsconfig.json ./tsconfig.json
+COPY ./yarn.lock ./yarn.lock
 
 RUN npm install -g bun@1.2.0 node-gyp@11.0.0 yarn@1.22.22
 
