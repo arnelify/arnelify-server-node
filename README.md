@@ -1,6 +1,6 @@
 <img src="https://static.wikia.nocookie.net/arnelify/images/c/c8/Arnelify-logo-2024.png/revision/latest?cb=20240701012515" style="width:336px;" alt="Arnelify Logo" />
 
-![Arnelify Server for NodeJS](https://img.shields.io/badge/Arnelify%20Server%20for%20NodeJS-0.6.0-yellow) ![C++](https://img.shields.io/badge/C++-2b-red) ![G++](https://img.shields.io/badge/G++-14.2.0-blue) ![NodeJS](https://img.shields.io/badge/NodeJS-22.13.1-green) ![Bun](https://img.shields.io/badge/Bun-1.2.0-blue)
+![Arnelify Server for NodeJS](https://img.shields.io/badge/Arnelify%20Server%20for%20NodeJS-0.6.1-yellow) ![C++](https://img.shields.io/badge/C++-2b-red) ![G++](https://img.shields.io/badge/G++-14.2.0-blue) ![NodeJS](https://img.shields.io/badge/NodeJS-22.13.1-green) ![Bun](https://img.shields.io/badge/Bun-1.2.0-green)
 
 ## 🚀 About
 **Arnelify® Server for NodeJS** - is a minimalistic NodeJS (Bun) addon which is a powerful http-server written in C and C++.
@@ -25,9 +25,9 @@ Compile library:
 ```
 yarn build
 ```
-Run tests:
+Run test:
 ```
-yarn tests
+yarn test
 ```
 ## 📚 Examples
 Configure the C/C++ IntelliSense plugin for VSCode (optional).
@@ -45,10 +45,8 @@ IncludePath for VSCode (optional):
   "${workspaceFolder}/src"
 ],
 ```
-You can find code examples here:
-```
-./src/tests/index.ts
-```
+You can find code examples <a href="https://github.com/arnelify/arnelify-server-node/blob/main/src/tests/index.ts">here</a>.
+
 | **Option**|**Description**|
 |-|-|
 | **SERVER_ALLOW_EMPTY_FILES**| If this option is enabled, the server will not reject empty files.|
@@ -73,7 +71,7 @@ Join us to help improve this software, fix bugs or implement new functionality. 
 
 
 ## ⭐ Release Notes
-Version 0.6.0 - NodeJS (Bun) Addon
+Version 0.6.1 - NodeJS (Bun) Addon
 
 We are excited to introduce the Arnelify Server NodeJS (Bun) addon! Please note that this version is raw and still in active development.
 

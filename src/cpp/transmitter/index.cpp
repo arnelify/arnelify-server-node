@@ -21,7 +21,7 @@ class ArnelifyTransmitter final {
                                             const bool &isError) {
     if (isError) {
       std::cout << "[Arnelify Server]: Error: " << message << std::endl;
-      exit(1);
+      return;
     }
 
     std::cout << "[Arnelify Server]: " << message << std::endl;
@@ -86,7 +86,8 @@ class ArnelifyTransmitter final {
                            Z_DEFAULT_STRATEGY);
     if (ret != Z_OK) {
       this->callback("deflateInit2 failed with error: ", true);
-      std::cerr << ret << std::endl;
+      std::cout << "Zlib error: " << ret << std::endl;
+      deflateEnd(&zlib);
       return;
     }
 
@@ -98,7 +99,7 @@ class ArnelifyTransmitter final {
     ret = deflate(&zlib, Z_FINISH);
     if (ret == Z_STREAM_ERROR) {
       this->callback("deflateInit2 failed with error: ", true);
-      std::cerr << ret << std::endl;
+      std::cout << "Zlib error: " << ret << std::endl;
       deflateEnd(&zlib);
       return;
     }
@@ -287,7 +288,7 @@ class ArnelifyTransmitter final {
     if (hasBody) {
       this->callback(
           "Can't add an attachment to a Response that contains a body.", true);
-      return;
+      exit(1);
     }
 
     this->filePath = filePath;

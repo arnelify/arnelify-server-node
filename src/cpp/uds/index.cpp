@@ -13,19 +13,25 @@
 #include <thread>
 #include <unistd.h>
 
+#include "json.h"
+
 #include "contracts/opts.hpp"
 
 class ArnelifyUnixDomainSocketClient {
  private:
   std::string buffer;
-  std::function<void(const std::string&, const bool&)> callback;
+  std::function<void(const std::string&, const bool&)> callback =
+      [](const std::string& message, const bool& isError) {
+        if (isError) std::cout << "Error: " << message << std::endl;
+      };
+
   int clientSocket;
   const ArnelifyUnixDomainSocketClientOpts opts;
   std::map<std::string, std::function<void(const std::string&)>> res;
   int size;
 
   void read() {
-    std::thread udsThread([this]() {
+    std::thread thread([this]() {
       const int BLOCK_SIZE = this->opts.UDS_BLOCK_SIZE_KB * 1024;
 
       ssize_t bytesRead = 0;
@@ -35,7 +41,7 @@ class ArnelifyUnixDomainSocketClient {
       }
     });
 
-    udsThread.detach();
+    thread.detach();
   }
 
   void receiver(const char* block, const std::size_t bytesRead) {
@@ -64,17 +70,18 @@ class ArnelifyUnixDomainSocketClient {
               "Message from UDS (Unix Domain Socket) must be in valid JSON "
               "format.",
               true);
-        } else {
-          const std::string uuid = json["uuid"].asString();
-          const std::function<void(const std::string&)> resolve =
-              this->res[uuid];
-
-          Json::StreamWriterBuilder writer;
-          writer["indentation"] = "";
-          writer["emitUTF8"] = true;
-          resolve(Json::writeString(writer, json["content"]));
-          this->res.erase(uuid);
+          close(this->clientSocket);
+          return;
         }
+        
+        const std::string uuid = json["uuid"].asString();
+        const std::function<void(const std::string&)> resolve = this->res[uuid];
+
+        Json::StreamWriterBuilder writer;
+        writer["indentation"] = "";
+        writer["emitUTF8"] = true;
+        resolve(Json::writeString(writer, json["content"]));
+        this->res.erase(uuid);
 
         this->buffer = this->buffer.substr(this->size);
         this->size = 0;

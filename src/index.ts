@@ -31,11 +31,11 @@ class ArnelifyServer {
    */
   #callback = (message: string, isError: boolean): void => {
     if (isError) {
-      console.log("\x1b[31m" + `[Arnelify Server]: NodeJS error: ${message}` + "\x1b[0m");
-      process.exit(1);
+      console.log(`[Arnelify Server]: NodeJS error: ${message}`);
+      return;
     }
 
-    console.log("\x1b[32m" + `[Arnelify Server]: ${message}` + "\x1b[0m");
+    console.log(`[Arnelify Server]: ${message}`);
   };
 
   #handler: (req: Req, res: Res) => Promise<void> = async (req: Req, res: Res): Promise<void> => {

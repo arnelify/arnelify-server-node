@@ -19,7 +19,7 @@ class ArnelifyServer {
       [](const std::string &message, const bool &isError) -> void {
     if (isError) {
       std::cout << "[Arnelify Server]: Error: " << message << std::endl;
-      exit(1);
+      return;
     }
 
     std::cout << "[Arnelify Server]: " << message << std::endl;

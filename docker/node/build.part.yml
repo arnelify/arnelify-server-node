@@ -4,7 +4,7 @@
       context: .
       dockerfile: node.dockerfile
     volumes:
-      - ./src:/var/www/node/src
+      - ./:/var/www/node
     healthcheck:
       start_period: 10s
       test: ["CMD", "curl", "-f", "http://localhost:3001"]

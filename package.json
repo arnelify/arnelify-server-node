@@ -1,6 +1,6 @@
 {
   "name": "arnelify-server",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Minimalistic NodeJS (Bun) addon which is a powerful http-server written in C and C++.",
   "keywords": [
     "arnelify",
@@ -13,7 +13,7 @@
   "main": "src/index.ts",
   "scripts": {
     "build": "clear && node-gyp configure && node-gyp build",
-    "tests": "clear && src/tests/index.ts"
+    "test": "clear && src/tests/index.ts"
   },
   "dependencies": {
     "node-addon-api": "^8.3.0"

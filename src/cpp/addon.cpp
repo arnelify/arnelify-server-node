@@ -296,7 +296,7 @@ Napi::Value server_start(const Napi::CallbackInfo& info) {
 
   if (error) return env.Undefined();
 
-  std::thread serverThread([]() {
+  std::thread thread([]() {
     server->start([](const std::string& message, const bool& isError) {
       Json::StreamWriterBuilder writer;
       writer["indentation"] = "";
@@ -317,7 +317,7 @@ Napi::Value server_start(const Napi::CallbackInfo& info) {
     });
   });
 
-  serverThread.detach();
+  thread.detach();
   return env.Undefined();
 }
 

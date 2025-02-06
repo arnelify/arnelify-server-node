@@ -17,7 +17,7 @@ class ArnelifyUDS {
         let size: number = 0;
 
         while (buffer.length > 0) {
-          
+
           if (!size) {
             const sizeEnd: number = buffer.indexOf(":");
             const hasSizeEnd: boolean = sizeEnd != -1;
@@ -28,7 +28,7 @@ class ArnelifyUDS {
           }
 
           if (size > buffer.length) break;
-          
+
           if (buffer.length >= size) {
             const message: string = buffer.substring(0, size);
             let json: { [key: string]: any } = {};
@@ -68,13 +68,7 @@ class ArnelifyUDS {
    * @param {boolean} isError
    */
   #callback: (message: string, isError: boolean) => void = (message: string, isError: boolean): void => {
-    if (isError) {
-      console.log(
-        "\x1b[31m" +
-        `[Arnelify Unix Domain Socket]: NodeJS error: ${message}` +
-        "\x1b[0m"
-      );
-    }
+    if (isError) console.log(`[Arnelify Unix Domain Socket]: NodeJS error: ${message}`);
   };
 
   /**
