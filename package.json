@@ -21,12 +21,12 @@
   "devDependencies": {
     "@types/node": "^22.12.0"
   },
-  "homepage": "https://github.com/arnelify/arnelify-pod-node#readme",
+  "homepage": "https://github.com/arnelify/arnelify-server-node#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/arnelify/arnelify-pod-node.git"
+    "url": "git+https://github.com/arnelify/arnelify-server-node.git"
   },
   "bugs": {
-    "url": "https://github.com/arnelify/arnelify-pod-node/issues"
+    "url": "https://github.com/arnelify/arnelify-server-node/issues"
   }
 }

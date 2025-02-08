@@ -64,7 +64,7 @@ You can find code examples <a href="https://github.com/arnelify/arnelify-server-
 | **SERVER_UPLOAD_DIR**| Specifies the upload directory for storage.|
 
 ## ⚖️ MIT License
-This software is licensed under the <a href="https://github.com/arnelify/arnelify-server-cpp/blob/main/LICENSE">MIT License</a>. The original author's name, logo, and the original name of the software must be included in all copies or substantial portions of the software.
+This software is licensed under the <a href="https://github.com/arnelify/arnelify-server-node/blob/main/LICENSE">MIT License</a>. The original author's name, logo, and the original name of the software must be included in all copies or substantial portions of the software.
 
 ## 🛠️ Contributing
 Join us to help improve this software, fix bugs or implement new functionality. Active participation will help keep the software up-to-date, reliable, and aligned with the needs of its users.
