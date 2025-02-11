@@ -150,7 +150,7 @@ void server_destroy() { server = nullptr; }
 
 void server_set_handler(const char *(*cHandler)(const char *),
                         const int hasRemove) {
-  server->setHandler([cHandler, hasRemove](const Req &req, Res res) -> void {
+  server->setHandler([cHandler, hasRemove](const ArnelifyServerReq &req, ArnelifyServerRes res) -> void {
     Json::StreamWriterBuilder writer;
     writer["indentation"] = "";
     writer["emitUTF8"] = true;

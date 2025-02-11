@@ -300,6 +300,4 @@ class ArnelifyTransmitter final {
   }
 };
 
-using Res = ArnelifyTransmitter *;
-
 #endif

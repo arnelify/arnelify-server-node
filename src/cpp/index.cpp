@@ -12,11 +12,17 @@
 
 #include "contracts/opts.hpp"
 
+using ArnelifyServerRes = ArnelifyTransmitter *;
+using ArnelifyServerCallback =
+    std::function<void(const std::string &, const bool &)>;
+using ArnelifyServerHandler =
+    std::function<void(const ArnelifyServerReq &, ArnelifyServerRes)>;
+
 class ArnelifyServer {
  private:
   const ArnelifyServerOpts opts;
-  std::function<void(const std::string &, const bool &)> callback =
-      [](const std::string &message, const bool &isError) -> void {
+  ArnelifyServerCallback callback = [](const std::string &message,
+                                       const bool &isError) -> void {
     if (isError) {
       std::cout << "[Arnelify Server]: Error: " << message << std::endl;
       return;
@@ -25,8 +31,8 @@ class ArnelifyServer {
     std::cout << "[Arnelify Server]: " << message << std::endl;
   };
 
-  std::function<void(const Req &, Res)> handler = [](const Req &req,
-                                                       Res res) -> void {
+  ArnelifyServerHandler handler = [](const ArnelifyServerReq &req,
+                                     ArnelifyServerRes res) -> void {
     Json::StreamWriterBuilder writer;
     writer["indentation"] = "";
     writer["emitUTF8"] = true;
@@ -91,7 +97,7 @@ class ArnelifyServer {
 
     res->setCallback(this->callback);
     res->setEncoding(receiver->getEncoding());
-    const Req req = receiver->finish();
+    const ArnelifyServerReq req = receiver->finish();
     delete receiver;
 
     this->handler(req, res);
@@ -131,12 +137,11 @@ class ArnelifyServer {
 
  public:
   ArnelifyServer(ArnelifyServerOpts &o) : isRunning(false), opts(o) {}
-  void setHandler(std::function<void(const Req &, Res)> handler) {
+  void setHandler(const ArnelifyServerHandler &handler) {
     this->handler = handler;
   }
 
-  void start(
-      const std::function<void(const std::string &, const bool &)> &callback) {
+  void start(const ArnelifyServerCallback &callback) {
     const std::filesystem::path uploadDir = this->opts.SERVER_UPLOAD_DIR;
     const bool hasUploadDir = std::filesystem::exists(uploadDir);
     if (!hasUploadDir) std::filesystem::create_directory(uploadDir);

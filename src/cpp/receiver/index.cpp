@@ -11,7 +11,7 @@
 
 #include "contracts/opts.hpp"
 
-using Req = Json::Value;
+using ArnelifyServerReq = Json::Value;
 
 class ArnelifyReceiver final {
  private:
@@ -28,7 +28,7 @@ class ArnelifyReceiver final {
   bool startSize;
   const ArnelifyReceiverOpts opts;
   std::string buffer;
-  Req req;
+  ArnelifyServerReq req;
 
   std::string acceptEncoding;
   std::string contentType;
