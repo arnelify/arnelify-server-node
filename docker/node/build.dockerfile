@@ -1,6 +1,7 @@
 FROM gcc:14.2.0
 
 WORKDIR /var/www/node
+ENV TZ=Europe/Kiev
 
 RUN apt-get update -y && apt-get upgrade -y
 RUN apt-get install sudo nano libjsoncpp-dev -y

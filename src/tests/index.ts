@@ -1,13 +1,9 @@
 #!/usr/bin/env bun
-
-import ArnelifyServer from "../index";
-
-import Req from "contracts/req";
-import Res from "contracts/res";
+import { ArnelifyServer, ArnelifyServerOpts, Req, Res } from "../index";
 
 (function main(): number {
 
-  const server: ArnelifyServer = new ArnelifyServer({
+  const opts: ArnelifyServerOpts = {
     "SERVER_ALLOW_EMPTY_FILES": true,
     "SERVER_BLOCK_SIZE_KB": 64,
     "SERVER_CHARSET": "UTF-8",
@@ -21,8 +17,9 @@ import Res from "contracts/res";
     "SERVER_PORT": 3001,
     "SERVER_QUEUE_LIMIT": 1024,
     "SERVER_UPLOAD_DIR": "./src/storage/upload"
-  });
+  };
 
+  const server: ArnelifyServer = new ArnelifyServer(opts);
   server.setHandler(async (req: Req, res: Res): Promise<void> => {
     res.setCode(200);
     res.addBody(JSON.stringify(req));

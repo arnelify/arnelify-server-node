@@ -1,5 +1,5 @@
 import net from "net";
-import { access, unlink } from "fs/promises";
+import { access } from "fs/promises";
 
 /**
  * Arnelify Unix Domain Socket Server
@@ -7,83 +7,43 @@ import { access, unlink } from "fs/promises";
 class ArnelifyUDS {
 
   #opts: { [key: string]: any } = {};
-  #server: any = null;
+  #socket: any = null;
 
   constructor(opts: { [key: string]: any }) {
     this.#opts = opts;
-    this.#server = net.createServer((socket: any): void => {
-      socket.on('data', async (block: Buffer<ArrayBuffer>): Promise<void> => {
-        let buffer: string = block.toString();
-        let size: number = 0;
-
-        while (buffer.length > 0) {
-
-          if (!size) {
-            const sizeEnd: number = buffer.indexOf(":");
-            const hasSizeEnd: boolean = sizeEnd != -1;
-            if (hasSizeEnd) {
-              size = Number(buffer.substring(0, sizeEnd));
-              buffer = buffer.substring(sizeEnd + 1);
-            }
-          }
-
-          if (size > buffer.length) break;
-
-          if (buffer.length >= size) {
-            const message: string = buffer.substring(0, size);
-            let json: { [key: string]: any } = {};
-
-            try {
-              json = JSON.parse(message);
-
-            } catch (err) {
-              this.#callback("Message from UDS (Unix Domain Socket) must be in valid JSON format.", true);
-              process.exit(1);
-            }
-
-            const { content, uuid } = json;
-
-            if (!uuid) {
-              this.#callback("The 'uuid' is missing in the message.", true);
-              process.exit(1);
-            }
-
-            if (!content) {
-              this.#callback("The 'content' is missing in the message.", true);
-              process.exit(1);
-            }
-
-            await this.#handler(json, socket);
-            buffer = buffer.substring(size);
-            size = 0;
-          }
-        }
-      });
-    });
+    this.#socket = new net.Socket();
   }
 
   /**
-   * Callback
+   * Logger
    * @param {string} message
    * @param {boolean} isError
    */
-  #callback: (message: string, isError: boolean) => void = (message: string, isError: boolean): void => {
-    if (isError) console.log(`[Arnelify Unix Domain Socket]: NodeJS error: ${message}`);
-  };
+  #logger: (message: string,
+    isError: boolean) => void = (message: string, isError: boolean): void => {
+      if (isError) console.log(`[Arnelify Unix Domain Socket]: NodeJS error: ${message}`);
+    };
 
   /**
    * Connect
-   * @param {CallableFunction} callback
+   * @param {CallableFunction} logger
    * @returns 
    */
-  async connect(callback: (message: string, isErorr: boolean) => void): Promise<boolean> {
+  async connect(logger: (message: string, isErorr: boolean) => void): Promise<boolean> {
     if (!this.#opts) return false;
-    this.#callback = callback;
+    this.#logger = logger;
 
-    const isExists: boolean = await this.#exists();
-    if (isExists) await unlink(this.#opts.UDS_SOCKET_PATH);
+    let isExists: boolean = await this.#exists();
+    while (!isExists) isExists = await this.#exists();
+    this.#socket.connect(this.#opts.UDS_SOCKET_PATH);
+    this.#socket.on('data', async (data: Buffer<ArrayBufferLike>): Promise<void> => {
+      await this.#on(data);
+    });
 
-    this.#server.listen(this.#opts.UDS_SOCKET_PATH);
+    this.#socket.on('error', (err: Error) => {
+      this.#logger(`Error occurred: ${err.message}`, true);
+    });
+
     return true;
   }
 
@@ -102,34 +62,89 @@ class ArnelifyUDS {
   }
 
   /**
+   * Get Bytes
+   * @param buffer 
+   * @returns 
+   */
+  #getBytes(buffer: string): number {
+    const utf8: Buffer<ArrayBuffer> = Buffer.from(buffer, 'utf8');
+    return utf8.length;
+  }
+
+  /**
    * Handler
    * @param {object} json
    * @param {any} socket 
    */
-  #handler: (json: { [key: string]: any }, socket: any) => Promise<void> = async (json: { [key: string]: any }, socket: any): Promise<void> => {
-    const { content } = json;
+  #handler: (client: any, json: { [key: string]: any }) => Promise<void> =
+    async (client: any, json: { [key: string]: any }): Promise<void> => {
+      const { content } = json;
 
-    const { _state } = content;
-    if (_state) {
-      const res: string = JSON.stringify(json);
-      socket.write(`${res.length}:${res}`);
-      return;
-    }
+      const { _state } = content;
+      if (_state) {
+        client.write(JSON.stringify(json));
+        return;
+      }
 
-    const { _stdout } = content;
-    if (_stdout) {
-      const { message, isErorr } = _stdout;
-      if (isErorr) {
-        this.#callback(message, isErorr);
+      const { _stdout } = content;
+      if (_stdout) {
+        const { message, isErorr } = _stdout;
+        if (isErorr) {
+          this.#logger(message, isErorr);
+        }
+      }
+    };
+
+  /**
+   * On
+   * @param {Buffer} block 
+   */
+  async #on(block: Buffer<ArrayBufferLike>): Promise<void> {
+    let buffer: string = block.toString();
+    let size: number = 0;
+
+    while (this.#getBytes(buffer) > 0) {
+
+      if (!size) {
+        const sizeEnd: number = buffer.indexOf(":");
+        const hasSizeEnd: boolean = sizeEnd != -1;
+        if (hasSizeEnd) {
+          size = Number(buffer.substring(0, sizeEnd));
+          buffer = buffer.substring(sizeEnd + 1);
+        }
+      }
+
+      if (size > this.#getBytes(buffer)) break;
+      if (this.#getBytes(buffer) >= size) {
+        const message: string = buffer.substring(0, size);
+        let json: { [key: string]: any } = {};
+
+        try {
+          json = JSON.parse(message);
+
+        } catch (err) {
+          this.#logger("Message from UDS (Unix Domain Socket) must be in valid JSON format.", true);
+          process.exit(1);
+        }
+
+        const { content, uuid } = json;
+        if (!content || !uuid) {
+          this.#logger("The 'uuid' or 'content' is missing in the message.", true);
+          process.exit(1);
+        }
+
+        await this.#handler(this, json);
+        buffer = buffer.substring(size);
+        size = 0;
       }
     }
-  };
+  }
 
   /**
    * Set Handler
    * @param {CallableFunction} handler
    */
-  setHandler(handler: (req: { [key: string]: any }, socket: any) => Promise<void>): void {
+  setHandler(handler: (client: any, json: { [key: string]: any }) => Promise<void>): void {
     this.#handler = handler;
   }
 
@@ -137,7 +152,25 @@ class ArnelifyUDS {
    * Stop
    */
   async stop(): Promise<void> {
-    this.#server.close();
+    if (this.#socket) this.#socket.close();
+  }
+
+  /**
+   * Write
+   * @param {object} content 
+   */
+  write(content: string): void {
+    const hasWritableSocket: boolean =
+      this.#socket && this.#socket.writable;
+    if (hasWritableSocket) {
+      const message: string = `${this.#getBytes(content)}:${content}`;
+      this.#socket.write(message, (err: any): void => {
+        if (err) {
+          this.#logger(`Failed to send message to UDS (Unix Domain Socket).`, true);
+          return;
+        }
+      });
+    }
   }
 }
 

@@ -12,7 +12,7 @@
 #include "index.cpp"
 
 ArnelifyServer* server = nullptr;
-ArnelifyUnixDomainSocketClient* uds = nullptr;
+ArnelifyUDS* uds = nullptr;
 
 Napi::Value server_create(const Napi::CallbackInfo& args) {
   Napi::Env env = args.Env();
@@ -168,10 +168,9 @@ Napi::Value server_create(const Napi::CallbackInfo& args) {
                              json["SERVER_SOCKET_PATH"].isString();
   if (!hasSocketPath) json["SERVER_SOCKET_PATH"] = "/tmp/arnelify.sock";
 
-  ArnelifyUnixDomainSocketClientOpts udsOpts(
-      json["SERVER_BLOCK_SIZE_KB"].asInt(),
-      json["SERVER_SOCKET_PATH"].asString());
-  uds = new ArnelifyUnixDomainSocketClient(udsOpts);
+  ArnelifyUDSOpts udsOpts(json["SERVER_BLOCK_SIZE_KB"].asInt(),
+                          json["SERVER_SOCKET_PATH"].asString());
+  uds = new ArnelifyUDS(udsOpts);
 
   ArnelifyServerOpts opts(
       json["SERVER_ALLOW_EMPTY_FILES"].asBool(),
@@ -185,7 +184,8 @@ Napi::Value server_create(const Napi::CallbackInfo& args) {
       json["SERVER_QUEUE_LIMIT"].asInt(), json["SERVER_UPLOAD_DIR"].asString());
 
   server = new ArnelifyServer(opts);
-  server->setHandler([](const ArnelifyServerReq& req, ArnelifyServerRes res) {
+  server->setHandler([](const ArnelifyServerReq& req, ArnelifyServerRes res)
+  {
     std::promise<const std::string> promise;
     std::future<const std::string> future = promise.get_future();
     std::thread thread(
@@ -283,18 +283,6 @@ Napi::Value server_destroy(const Napi::CallbackInfo& args) {
 
 Napi::Value server_start(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  bool error = false;
-
-  uds->connect([&error](const std::string& message, const bool& isError) {
-    if (isError) {
-      std::cout << "\033[31m"
-                << "[Arnelify Unix Domain Socket]: C++ Error: " << message
-                << "\033[0m" << std::endl;
-      error = isError;
-    }
-  });
-
-  if (error) return env.Undefined();
 
   std::thread thread([]() {
     server->start([](const std::string& message, const bool& isError) {
@@ -328,11 +316,37 @@ Napi::Value server_stop(const Napi::CallbackInfo& info) {
   return env.Undefined();
 }
 
+Napi::Value uds_start(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  std::thread thread([]() {
+    uds->connect([](const std::string& message, const bool& isError) {
+      if (isError) {
+        std::cout << "\033[31m"
+                  << "[Arnelify Unix Domain Socket]: C++ Error: " << message
+                  << "\033[0m" << std::endl;
+      }
+    });
+  });
+
+  thread.detach();
+  return env.Undefined();
+}
+
+Napi::Value uds_stop(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  uds->stop();
+  return env.Undefined();
+}
+
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("server_create", Napi::Function::New(env, server_create));
   exports.Set("server_destroy", Napi::Function::New(env, server_destroy));
   exports.Set("server_start", Napi::Function::New(env, server_start));
   exports.Set("server_stop", Napi::Function::New(env, server_stop));
+  exports.Set("uds_start", Napi::Function::New(env, uds_start));
+  exports.Set("uds_stop", Napi::Function::New(env, uds_stop));
   return exports;
 }
 

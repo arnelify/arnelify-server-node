@@ -1,5 +1,5 @@
-#ifndef ARNELIFY_UNIX_DOMAIN_SOCKET_CLIENT_CPP
-#define ARNELIFY_UNIX_DOMAIN_SOCKET_CLIENT_CPP
+#ifndef ARNELIFY_UNIX_DOMAIN_SOCKET_SERVER_CPP
+#define ARNELIFY_UNIX_DOMAIN_SOCKET_SERVER_CPP
 
 #include <arpa/inet.h>
 #include <filesystem>
@@ -17,16 +17,18 @@
 
 #include "contracts/opts.hpp"
 
-class ArnelifyUnixDomainSocketClient {
+class ArnelifyUDS {
  private:
   std::string buffer;
-  std::function<void(const std::string&, const bool&)> callback =
+  std::function<void(const std::string&, const bool&)> logger =
       [](const std::string& message, const bool& isError) {
         if (isError) std::cout << "Error: " << message << std::endl;
       };
 
   int clientSocket;
-  const ArnelifyUnixDomainSocketClientOpts opts;
+  int serverSocket;
+
+  const ArnelifyUDSOpts opts;
   std::map<std::string, std::function<void(const std::string&)>> res;
   int size;
 
@@ -66,14 +68,14 @@ class ArnelifyUnixDomainSocketClient {
         std::string errors;
         std::istringstream iss(message);
         if (!Json::parseFromStream(reader, iss, &json, &errors)) {
-          this->callback(
+          this->logger(
               "Message from UDS (Unix Domain Socket) must be in valid JSON "
               "format.",
               true);
           close(this->clientSocket);
           return;
         }
-        
+
         const std::string uuid = json["uuid"].asString();
         const std::function<void(const std::string&)> resolve = this->res[uuid];
 
@@ -90,37 +92,47 @@ class ArnelifyUnixDomainSocketClient {
   }
 
  public:
-  ArnelifyUnixDomainSocketClient(const ArnelifyUnixDomainSocketClientOpts& o)
-      : clientSocket(0), opts(o), size(0) {}
+  ArnelifyUDS(const ArnelifyUDSOpts& o)
+      : clientSocket(0), serverSocket(0), opts(o), size(0) {}
+
+  ~ArnelifyUDS() { this->stop(); }
 
   void connect(
-      const std::function<void(const std::string&, const bool&)>& callback) {
-    this->callback = callback;
+      const std::function<void(const std::string&, const bool&)>& logger) {
+    this->logger = logger;
 
     const std::string socketPath = this->opts.UDS_SOCKET_PATH;
     const bool hasSocket = std::filesystem::exists(socketPath);
-    if (!hasSocket) {
-      this->callback("Error connecting to UDS (Unix Domain Socket).", true);
-      return;
-    }
+    if (hasSocket) unlink(socketPath.c_str());
 
-    this->clientSocket = socket(AF_UNIX, SOCK_STREAM, 0);
-    const bool isServerSocketCreated = this->clientSocket == -1;
-    if (isServerSocketCreated) {
-      this->callback("Error connecting to UDS (Unix Domain Socket).", true);
+    this->serverSocket = socket(AF_UNIX, SOCK_STREAM, 0);
+    const bool isCreated = this->serverSocket == -1;
+    if (isCreated) {
+      this->logger("Error creating UDS (Unix Domain Socket).", true);
       return;
     }
 
     sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-
     strncpy(addr.sun_path, socketPath.c_str(), sizeof(addr.sun_path) - 1);
-    const bool isConnected =
-        ::connect(this->clientSocket, (struct sockaddr*)&addr, sizeof(addr));
-    if (isConnected == -1) {
-      this->callback("Error connecting to UDS (Unix Domain Socket).", true);
-      close(this->clientSocket);
+
+    if (bind(this->serverSocket, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
+      this->logger("Error binding UDS (Unix Domain Socket).", true);
+      close(this->serverSocket);
+      return;
+    }
+
+    if (listen(this->serverSocket, 1) == -1) {
+      this->logger("Error listening on UDS (Unix Domain Socket).", true);
+      close(this->serverSocket);
+      return;
+    }
+
+    this->clientSocket = accept(this->serverSocket, nullptr, nullptr);
+    if (this->clientSocket == -1) {
+      this->logger("Unable to start UDS (Unix Domain Socket).", true);
+      close(this->serverSocket);
       return;
     }
 
@@ -158,6 +170,11 @@ class ArnelifyUnixDomainSocketClient {
     return ss.str();
   }
 
+  void stop() {
+    if (this->serverSocket != 0) close(this->serverSocket);
+    if (this->clientSocket != 0) close(this->clientSocket);
+  }
+
   void on(const std::string& requestId,
           const std::function<void(const std::string&)>& onMessage) {
     this->res[requestId] = onMessage;
@@ -167,8 +184,7 @@ class ArnelifyUnixDomainSocketClient {
     const std::string message =
         std::to_string(content.length()) + ":" + content;
     if (send(this->clientSocket, message.c_str(), message.length(), 0) == -1) {
-      this->callback("Failed to send message to UDS (Unix Domain Socket).",
-                     true);
+      this->logger("Failed to send message to UDS (Unix Domain Socket).", true);
       close(this->clientSocket);
       return;
     }

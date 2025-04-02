@@ -4,11 +4,11 @@
 #include <filesystem>
 #include <iostream>
 
-struct ArnelifyUnixDomainSocketClientOpts final {
+struct ArnelifyUDSOpts final {
   const std::size_t UDS_BLOCK_SIZE_KB;
   const std::filesystem::path UDS_SOCKET_PATH;
 
-  ArnelifyUnixDomainSocketClientOpts(
+  ArnelifyUDSOpts(
       const int &b, const std::string &s = "/tmp/arnelify.sock")
       : UDS_BLOCK_SIZE_KB(b), UDS_SOCKET_PATH(s) {};
 };

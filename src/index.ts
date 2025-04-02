@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
-
 import ArnelifyUDS from "./uds/index";
 
+import ArnelifyServerOpts from "./contracts/opts";
 import Req from "./contracts/req";
 import Res from "./contracts/res";
 
@@ -11,25 +11,27 @@ import Res from "./contracts/res";
 class ArnelifyServer {
 
   #lib: any = null;
+  #opts: ArnelifyServerOpts = {};
   #uds: any = null;
 
-  constructor(opts: { [key: string]: any }) {
-    const socketPath: string = opts.SERVER_SOCKET_PATH ?? "/tmp/arnelify.sock";
+  constructor(opts: ArnelifyServerOpts) {
+    this.#opts = opts;
+    const socketPath: string =
+      this.#opts.SERVER_SOCKET_PATH ?? "/tmp/arnelify.sock";
     this.#lib = require("../build/Release/arnelify-server.node");
+    this.#lib.server_create(JSON.stringify(this.#opts));
     this.#uds = new ArnelifyUDS({
-      "UDS_BLOCK_SIZE_KB": opts.SERVER_BLOCK_SIZE_KB,
+      "UDS_BLOCK_SIZE_KB": this.#opts.SERVER_BLOCK_SIZE_KB,
       "UDS_SOCKET_PATH": socketPath
     });
-
-    this.#lib.server_create(JSON.stringify(opts));
   }
 
   /**
-   * Callback
+   * Logger
    * @param {string} message 
    * @param {boolean} isError 
    */
-  #callback = (message: string, isError: boolean): void => {
+  #logger = (message: string, isError: boolean): void => {
     if (isError) {
       console.log(`[Arnelify Server]: NodeJS error: ${message}`);
       return;
@@ -38,6 +40,11 @@ class ArnelifyServer {
     console.log(`[Arnelify Server]: ${message}`);
   };
 
+  /**
+   * 
+   * @param {Req} req
+   * @param {Res} res
+   */
   #handler: (req: Req, res: Res) => Promise<void> = async (req: Req, res: Res): Promise<void> => {
     res.setCode(200);
     res.addBody(JSON.stringify({
@@ -58,33 +65,32 @@ class ArnelifyServer {
 
   /**
    * Start
-   * @param {CallableFunction} callback
+   * @param {CallableFunction} logger
    */
-  async start(callback: (message: string, isError: boolean) => void): Promise<void> {
-    this.#callback = callback;
+  async start(logger: (message: string, isError: boolean) => void): Promise<void> {
+    this.#logger = logger;
 
-    this.#uds.setHandler(async (json: { [key: string]: any }, socket: any): Promise<void> => {
-      const { content } = json;
-
+    this.#uds.setHandler(async (client: any, json: { [key: string]: any }): Promise<void> => {
+      const { content, uuid } = json;
       const { _state } = content;
       if (_state) {
         const transmitter: Res = new Res();
-        transmitter.setCallback(this.#callback);
+        transmitter.setLogger(this.#logger);
         await this.#handler(content, transmitter);
 
         json.content = transmitter.toJson();
-        const res: string = JSON.stringify(json);
-        socket.write(`${res.length}:${res}`);
+        client.write(JSON.stringify(json));
         return;
       }
 
       const { _stdout } = content;
       if (_stdout) {
         const { message, isError } = _stdout;
-        this.#callback(message, isError);
+        this.#logger(message, isError);
       }
     });
 
+    this.#lib.uds_start();
     await this.#uds.connect((message: string, isError: boolean): void => {
       if (isError) {
         console.log(
@@ -113,4 +119,5 @@ class ArnelifyServer {
   }
 }
 
-export default ArnelifyServer;
+export type { ArnelifyServerOpts, Req, Res };
+export { ArnelifyServer };

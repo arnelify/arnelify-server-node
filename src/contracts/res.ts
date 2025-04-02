@@ -12,7 +12,14 @@ class Res {
     };
   }
 
-  #callback: (message: string, isError: boolean) => void = (message: string, isError): void => {
+  /**
+   * Logger
+   * @param {string} message 
+   * @param {boolean} isError 
+   * @returns 
+   */
+  #logger: (message: string, isError: boolean) => void = 
+    (message: string, isError: boolean): void => {
     if (isError) {
       console.log("\x1b[31m" + `[Arnelify Server]: ${message}` + "\x1b[0m");
       return;
@@ -21,18 +28,31 @@ class Res {
     console.log("\x1b[32m" + `[Arnelify POD]: ${message}` + "\x1b[0m");
   };
 
-  setCallback(callback: (message: string, isErorr: boolean) => void) {
-    this.#callback = callback;
+  /**
+   * Set Logger
+   * @param {CallableFunction} logger 
+   */
+  setLogger(logger: (message: string, isErorr: boolean) => void): void {
+    this.#logger = logger;
   }
 
+  /**
+   * Set Code
+   * @param {number} code 
+   */
   setCode(code: number): void {
     this.#res.code = code;
   }
 
+  /**
+   * Set File
+   * @param {string} filePath 
+   * @param {boolean} isStatic 
+   */
   setFile(filePath: string, isStatic: boolean = false): void {
     const hasBody: boolean = !!this.#res.body.length;
     if (hasBody) {
-      this.#callback("Can't add an attachment to a Response that contains a body.", true);
+      this.#logger("Can't add an attachment to a Response that contains a body.", true);
       process.exit(1);
     }
 
@@ -40,21 +60,34 @@ class Res {
     this.#res.isStatic = isStatic;
   }
 
+  /**
+   * Set Header
+   * @param {string} key 
+   * @param {string} value 
+   */
   setHeader(key: string, value: string): void {
     this.#res.headers[key] = value;
   }
 
-  addBody(chunk: string) {
+  /**
+   * Add Body
+   * @param {string} chunk
+   */
+  addBody(chunk: string): void {
     const hasFile = !!this.#res.filePath.length;
     if (hasFile) {
-      this.#callback("Can't add body to a Response that contains a file.", true);
+      this.#logger("Can't add body to a Response that contains a file.", true);
       process.exit(1);
     }
 
     this.#res.body += chunk;
   }
 
-  end() {
+  /**
+   * End
+   * @returns 
+   */
+  end(): void {
     const hasFile = !!this.#res.filePath.length;
     if (hasFile) {
       this.#res.body = '';
@@ -68,11 +101,15 @@ class Res {
       return;
     }
 
-    this.#callback("Add the body or set the file.", true);
+    this.#logger("Add the body or set the file.", true);
     process.exit(1);
   }
 
-  toJson() {
+  /**
+   * To JSON
+   * @returns 
+   */
+  toJson(): {[key: string]: any} {
     return this.#res;
   }
 }
