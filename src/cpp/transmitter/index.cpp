@@ -10,14 +10,14 @@
 #include <unistd.h>
 #include <zlib.h>
 
-#include "contracts/callback.hpp"
+#include "contracts/logger.hpp"
 #include "contracts/opts.hpp"
 
 class ArnelifyTransmitter final {
  private:
   std::size_t blockSize;
   std::string body;
-  ArnelifyTransmitterCallback callback = [](const std::string &message,
+  ArnelifyTransmitterLogger logger = [](const std::string &message,
                                             const bool &isError) {
     if (isError) {
       std::cout << "[Arnelify Server]: Error: " << message << std::endl;
@@ -85,7 +85,7 @@ class ArnelifyTransmitter final {
     int ret = deflateInit2(&zlib, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 15 + 16, 8,
                            Z_DEFAULT_STRATEGY);
     if (ret != Z_OK) {
-      this->callback("deflateInit2 failed with error: ", true);
+      this->logger("deflateInit2 failed with error: ", true);
       std::cout << "Zlib error: " << ret << std::endl;
       deflateEnd(&zlib);
       return;
@@ -98,7 +98,7 @@ class ArnelifyTransmitter final {
     zlib.next_out = compressed;
     ret = deflate(&zlib, Z_FINISH);
     if (ret == Z_STREAM_ERROR) {
-      this->callback("deflateInit2 failed with error: ", true);
+      this->logger("deflateInit2 failed with error: ", true);
       std::cout << "Zlib error: " << ret << std::endl;
       deflateEnd(&zlib);
       return;
@@ -158,7 +158,6 @@ class ArnelifyTransmitter final {
   void sendBody(const std::size_t &bytesRead) {
     this->headers["Content-Length"] = std::to_string(bytesRead);
     this->sendHeaders();
-
     send(this->socket, this->body.c_str(), bytesRead, 0);
     this->body.clear();
   }
@@ -222,7 +221,7 @@ class ArnelifyTransmitter final {
   void addBody(const std::string &body) {
     const bool hasFile = !this->filePath.empty();
     if (hasFile) {
-      this->callback("Can't add body to a Response that contains a file.",
+      this->logger("Can't add body to a Response that contains a file.",
                      true);
       exit(1);
     }
@@ -256,7 +255,7 @@ class ArnelifyTransmitter final {
 
       this->code = 404;
       this->body = "{\"code\":404,\"Not found.\"}";
-      this->callback("Failed to open file: " + std::string(this->filePath),
+      this->logger("Failed to open file: " + std::string(this->filePath),
                      true);
     }
 
@@ -269,8 +268,8 @@ class ArnelifyTransmitter final {
     this->sendBody(bytesRead);
   }
 
-  void setCallback(const ArnelifyTransmitterCallback &callback) {
-    this->callback = callback;
+  void setLogger(const ArnelifyTransmitterLogger &logger) {
+    this->logger = logger;
   }
 
   void setCode(const int &code) { this->code = code; }
@@ -286,7 +285,7 @@ class ArnelifyTransmitter final {
                const bool &isStatic = false) {
     const bool hasBody = !body.empty();
     if (hasBody) {
-      this->callback(
+      this->logger(
           "Can't add an attachment to a Response that contains a body.", true);
       exit(1);
     }

@@ -13,7 +13,7 @@
 #include "contracts/opts.hpp"
 
 using ArnelifyServerRes = ArnelifyTransmitter *;
-using ArnelifyServerCallback =
+using ArnelifyServerLogger =
     std::function<void(const std::string &, const bool &)>;
 using ArnelifyServerHandler =
     std::function<void(const ArnelifyServerReq &, ArnelifyServerRes)>;
@@ -21,7 +21,7 @@ using ArnelifyServerHandler =
 class ArnelifyServer {
  private:
   const ArnelifyServerOpts opts;
-  ArnelifyServerCallback callback = [](const std::string &message,
+  ArnelifyServerLogger logger = [](const std::string &message,
                                        const bool &isError) -> void {
     if (isError) {
       std::cout << "[Arnelify Server]: Error: " << message << std::endl;
@@ -95,7 +95,7 @@ class ArnelifyServer {
       return;
     }
 
-    res->setCallback(this->callback);
+    res->setLogger(this->logger);
     res->setEncoding(receiver->getEncoding());
     const ArnelifyServerReq req = receiver->finish();
     delete receiver;
@@ -109,13 +109,13 @@ class ArnelifyServer {
     sockaddr_in clientAddr;
     socklen_t clientLen = sizeof(clientAddr);
     std::string sPort = std::to_string(this->opts.SERVER_PORT);
-    this->callback("Server is running on port " + sPort, false);
+    this->logger("Server is running on port " + sPort, false);
 
     while (true) {
       bool isStop = !this->isRunning;
       if (isStop) {
         close(this->serverSocket);
-        this->callback("Server stopped.", false);
+        this->logger("Server stopped.", false);
         exit(0);
       }
 
@@ -123,7 +123,7 @@ class ArnelifyServer {
           accept(this->serverSocket, (sockaddr *)&clientAddr, &clientLen);
       const bool isAcceptSuccess = clientSocket != -1;
       if (!isAcceptSuccess) {
-        callback("Accept failed.", true);
+        this->logger("Accept failed.", true);
         exit(1);
       }
 
@@ -141,17 +141,17 @@ class ArnelifyServer {
     this->handler = handler;
   }
 
-  void start(const ArnelifyServerCallback &callback) {
+  void start(const ArnelifyServerLogger &logger) {
     const std::filesystem::path uploadDir = this->opts.SERVER_UPLOAD_DIR;
     const bool hasUploadDir = std::filesystem::exists(uploadDir);
     if (!hasUploadDir) std::filesystem::create_directory(uploadDir);
-    this->callback = callback;
+    this->logger = logger;
     this->isRunning = true;
 
     this->serverSocket = socket(AF_INET, SOCK_STREAM, 0);
     const bool isServerSocketCreated = this->serverSocket != -1;
     if (!isServerSocketCreated) {
-      this->callback("Socket creation failed.", true);
+      this->logger("Socket creation failed.", true);
       exit(1);
     }
 
@@ -165,7 +165,7 @@ class ArnelifyServer {
         bind(this->serverSocket, (sockaddr *)&this->serverAddr,
              sizeof(this->serverAddr)) != -1;
     if (!isBindSuccess) {
-      this->callback("Bind failed.", true);
+      this->logger("Bind failed.", true);
       close(this->serverSocket);
       exit(1);
     }
@@ -173,7 +173,7 @@ class ArnelifyServer {
     const bool isListenSuccess =
         listen(this->serverSocket, this->opts.SERVER_QUEUE_LIMIT) != -1;
     if (!isListenSuccess) {
-      this->callback("Listen failed.", true);
+      this->logger("Listen failed.", true);
       close(this->serverSocket);
       exit(1);
     }

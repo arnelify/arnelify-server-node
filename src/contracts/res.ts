@@ -1,6 +1,6 @@
 class Res {
 
-  #res: {[key: string]: any} = {};
+  #res: { [key: string]: any } = {};
 
   constructor() {
     this.#res = {
@@ -18,15 +18,15 @@ class Res {
    * @param {boolean} isError 
    * @returns 
    */
-  #logger: (message: string, isError: boolean) => void = 
+  #logger: (message: string, isError: boolean) => void =
     (message: string, isError: boolean): void => {
-    if (isError) {
-      console.log("\x1b[31m" + `[Arnelify Server]: ${message}` + "\x1b[0m");
-      return;
-    }
+      if (isError) {
+        console.log("\x1b[31m" + `[Arnelify Server]: ${message}` + "\x1b[0m");
+        return;
+      }
 
-    console.log("\x1b[32m" + `[Arnelify POD]: ${message}` + "\x1b[0m");
-  };
+      console.log("\x1b[32m" + `[Arnelify POD]: ${message}` + "\x1b[0m");
+    };
 
   /**
    * Set Logger
@@ -100,16 +100,13 @@ class Res {
       this.#res.isStatic = false;
       return;
     }
-
-    this.#logger("Add the body or set the file.", true);
-    process.exit(1);
   }
 
   /**
    * To JSON
    * @returns 
    */
-  toJson(): {[key: string]: any} {
+  toJson(): { [key: string]: any } {
     return this.#res;
   }
 }
