@@ -1,10 +1,10 @@
-#ifndef ARNELIFY_SERVER_OPTS_HPP
-#define ARNELIFY_SERVER_OPTS_HPP
+#ifndef ARNELIFY_SERVER_TASK_OPTS_HPP
+#define ARNELIFY_SERVER_TASK_OPTS_HPP
 
 #include <filesystem>
 #include <iostream>
 
-struct ArnelifyServerOpts final {
+struct ArnelifyServerTaskOpts final {
   const bool SERVER_ALLOW_EMPTY_FILES;
   const std::size_t SERVER_BLOCK_SIZE_KB;
   const std::string SERVER_CHARSET;
@@ -15,16 +15,14 @@ struct ArnelifyServerOpts final {
   const int SERVER_MAX_FILES;
   const std::size_t SERVER_MAX_FILES_SIZE_TOTAL_MB;
   const std::size_t SERVER_MAX_FILE_SIZE_MB;
-  const int SERVER_PORT;
-  const int SERVER_THREAD_LIMIT;
-  const int SERVER_QUEUE_LIMIT;
   const std::filesystem::path SERVER_UPLOAD_DIR;
 
-  ArnelifyServerOpts(const bool &a, const int &b, const std::string &c,
-                     const bool &g, const bool &k, const int &mfd,
-                     const int &mfdst, const int &mfl, const int &mflst,
-                     const int &mfls, const int &p, const int tl, const int &q,
-                     const std::string &u = "./src/storage/upload")
+  ArnelifyServerTaskOpts(const bool &a, const std::size_t &b,
+                         const std::string &c, const bool &g, const bool &k,
+                         const int &mfd, const std::size_t &mfdst,
+                         const int &mfl, const std::size_t &mflst,
+                         const std::size_t &mfls,
+                         const std::string &u = "./src/storage/upload")
       : SERVER_ALLOW_EMPTY_FILES(a),
         SERVER_BLOCK_SIZE_KB(b),
         SERVER_CHARSET(c),
@@ -35,9 +33,6 @@ struct ArnelifyServerOpts final {
         SERVER_MAX_FILES(mfl),
         SERVER_MAX_FILES_SIZE_TOTAL_MB(mflst),
         SERVER_MAX_FILE_SIZE_MB(mfls),
-        SERVER_PORT(p),
-        SERVER_THREAD_LIMIT(tl),
-        SERVER_QUEUE_LIMIT(q),
         SERVER_UPLOAD_DIR(u) {};
 };
 

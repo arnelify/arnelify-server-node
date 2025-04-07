@@ -6,7 +6,6 @@
 
 struct ArnelifyReceiverOpts final {
   const bool RECEIVER_ALLOW_EMPTY_FILES;
-  const std::string RECEIVER_CLIENT;
   const bool RECEIVER_KEEP_EXTENSIONS;
   const int RECEIVER_MAX_FIELDS;
   const std::size_t RECEIVER_MAX_FIELDS_SIZE_TOTAL_MB;
@@ -15,12 +14,11 @@ struct ArnelifyReceiverOpts final {
   const std::size_t RECEIVER_MAX_FILE_SIZE_MB;
   const std::filesystem::path RECEIVER_UPLOAD_DIR;
 
-  ArnelifyReceiverOpts(const bool &a, const std::string &c, const bool &k,
-                       const int &mfd, const std::size_t &mfdst, const int &mfl,
+  ArnelifyReceiverOpts(const bool &a, const bool &k, const int &mfd,
+                       const std::size_t &mfdst, const int &mfl,
                        const std::size_t &mflst, const std::size_t &mfls,
                        const std::string &u = "./src/storage/upload")
       : RECEIVER_ALLOW_EMPTY_FILES(a),
-        RECEIVER_CLIENT(c),
         RECEIVER_KEEP_EXTENSIONS(k),
         RECEIVER_MAX_FIELDS(mfd),
         RECEIVER_MAX_FIELDS_SIZE_TOTAL_MB(mfdst),

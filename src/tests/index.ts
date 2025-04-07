@@ -15,6 +15,7 @@ import { ArnelifyServer, ArnelifyServerOpts, Req, Res } from "../index";
     "SERVER_MAX_FILES_SIZE_TOTAL_MB": 60,
     "SERVER_MAX_FILE_SIZE_MB": 60,
     "SERVER_PORT": 3001,
+    "SERVER_THREAD_LIMIT": 1,
     "SERVER_QUEUE_LIMIT": 1024,
     "SERVER_UPLOAD_DIR": "./src/storage/upload"
   };

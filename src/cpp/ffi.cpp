@@ -119,6 +119,15 @@ void server_create(const char *cOpts) {
     exit(1);
   }
 
+  const bool hasThreadLimit =
+      json.isMember("SERVER_THREAD_LIMIT") && json["SERVER_THREAD_LIMIT"].isInt();
+  if (!hasThreadLimit) {
+    std::cout << "[Arnelify Server FFI]: C error: "
+                 "'SERVER_THREAD_LIMIT' is missing."
+              << std::endl;
+    exit(1);
+  }
+
   const bool hasQueueLimit =
       json.isMember("SERVER_QUEUE_LIMIT") && json["SERVER_QUEUE_LIMIT"].isInt();
   if (!hasQueueLimit) {
@@ -141,7 +150,8 @@ void server_create(const char *cOpts) {
       json["SERVER_MAX_FILES"].asInt(),
       json["SERVER_MAX_FILES_SIZE_TOTAL_MB"].asInt(),
       json["SERVER_MAX_FILE_SIZE_MB"].asInt(), json["SERVER_PORT"].asInt(),
-      json["SERVER_QUEUE_LIMIT"].asInt(), json["SERVER_UPLOAD_DIR"].asString());
+      json["SERVER_THREAD_LIMIT"].asInt(), json["SERVER_QUEUE_LIMIT"].asInt(),
+      json["SERVER_UPLOAD_DIR"].asString());
 
   server = new ArnelifyServer(opts);
 }
@@ -150,7 +160,8 @@ void server_destroy() { server = nullptr; }
 
 void server_set_handler(const char *(*cHandler)(const char *),
                         const int hasRemove) {
-  server->setHandler([cHandler, hasRemove](const ArnelifyServerReq &req, ArnelifyServerRes res) -> void {
+  server->setHandler([cHandler, hasRemove](const ArnelifyServerReq &req,
+                                           ArnelifyServerRes res) -> void {
     Json::StreamWriterBuilder writer;
     writer["indentation"] = "";
     writer["emitUTF8"] = true;
@@ -191,7 +202,6 @@ void server_set_handler(const char *(*cHandler)(const char *),
     if (json.isMember("filePath") && json.isMember("isStatic") &&
         json["filePath"].isString() && json["isStatic"].isBool() &&
         !json["filePath"].asString().empty()) {
-
       res->setFile(json["filePath"].asString(), json["isStatic"].asBool());
       res->end();
       return;

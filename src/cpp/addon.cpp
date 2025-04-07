@@ -8,7 +8,7 @@
 #include "json.h"
 #include "napi.h"
 
-#include "uds/index.cpp"
+#include "uds/index.hpp"
 #include "index.cpp"
 
 ArnelifyServer* server = nullptr;
@@ -150,6 +150,16 @@ Napi::Value server_create(const Napi::CallbackInfo& args) {
     return env.Undefined();
   }
 
+  const bool hasThreadLimit =
+      json.isMember("SERVER_THREAD_LIMIT") && json["SERVER_THREAD_LIMIT"].isInt();
+  if (!hasThreadLimit) {
+    Napi::TypeError::New(env,
+                         "[Arnelify Server]: C++ error: "
+                         "'SERVER_THREAD_LIMIT' is missing.")
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
   const bool hasQueueLimit =
       json.isMember("SERVER_QUEUE_LIMIT") && json["SERVER_QUEUE_LIMIT"].isInt();
   if (!hasQueueLimit) {
@@ -181,11 +191,11 @@ Napi::Value server_create(const Napi::CallbackInfo& args) {
       json["SERVER_MAX_FILES"].asInt(),
       json["SERVER_MAX_FILES_SIZE_TOTAL_MB"].asInt(),
       json["SERVER_MAX_FILE_SIZE_MB"].asInt(), json["SERVER_PORT"].asInt(),
-      json["SERVER_QUEUE_LIMIT"].asInt(), json["SERVER_UPLOAD_DIR"].asString());
+      json["SERVER_THREAD_LIMIT"].asInt(), json["SERVER_QUEUE_LIMIT"].asInt(),
+      json["SERVER_UPLOAD_DIR"].asString());
 
   server = new ArnelifyServer(opts);
-  server->setHandler([](const ArnelifyServerReq& req, ArnelifyServerRes res)
-  {
+  server->setHandler([](const ArnelifyServerReq& req, ArnelifyServerRes res) {
     std::promise<const std::string> promise;
     std::future<const std::string> future = promise.get_future();
     std::thread thread(

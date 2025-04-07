@@ -7,14 +7,12 @@ struct ArnelifyTransmitterOpts final {
   const std::size_t TRANSMITTER_BLOCK_SIZE_KB;
   const std::string TRANSMITTER_CHARSET;
   const bool TRANSMITTER_GZIP;
-  const std::string TRANSMITTER_CLIENT;
 
   ArnelifyTransmitterOpts(const std::size_t &bs, const std::string &ch,
-                          const bool &g, const std::string &cl)
+                          const bool &g)
       : TRANSMITTER_BLOCK_SIZE_KB(bs),
         TRANSMITTER_CHARSET(ch),
-        TRANSMITTER_GZIP(g),
-        TRANSMITTER_CLIENT(cl) {};
+        TRANSMITTER_GZIP(g) {};
 };
 
 #endif

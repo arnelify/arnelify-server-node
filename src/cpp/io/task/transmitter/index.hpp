@@ -10,6 +10,8 @@
 #include <unistd.h>
 #include <zlib.h>
 
+#include "json.h"
+
 #include "contracts/logger.hpp"
 #include "contracts/opts.hpp"
 
@@ -17,8 +19,15 @@ class ArnelifyTransmitter final {
  private:
   std::size_t blockSize;
   std::string body;
+  int code;
+  std::filesystem::path filePath;
+  bool isGzip;
+  bool isStatic;
+  std::map<std::string, std::string> headers;
+  const ArnelifyTransmitterOpts opts;
+
   ArnelifyTransmitterLogger logger = [](const std::string &message,
-                                            const bool &isError) {
+                                        const bool &isError) {
     if (isError) {
       std::cout << "[Arnelify Server]: Error: " << message << std::endl;
       return;
@@ -27,13 +36,12 @@ class ArnelifyTransmitter final {
     std::cout << "[Arnelify Server]: " << message << std::endl;
   };
 
-  int code;
-  std::filesystem::path filePath;
-  bool isGzip;
-  bool isStatic;
-  std::map<std::string, std::string> headers;
-  const ArnelifyTransmitterOpts opts;
-  const int socket;
+  std::function<void(const char *, const std::size_t &)> send =
+      [](const char *buffer, const int &bytesRead) {
+        std::string data;
+        data.append(buffer, bytesRead);
+        std::cout << "[Arnelify Server]: sent: " << data << std::endl;
+      };
 
   const std::string getMime(const std::string &extension) {
     const std::string &charset = this->opts.TRANSMITTER_CHARSET;
@@ -151,14 +159,14 @@ class ArnelifyTransmitter final {
     }
 
     response.append("\r\n");
-    send(this->socket, response.c_str(), response.length(), 0);
+    this->send(response.c_str(), response.length());
     this->resetHeaders();
   }
 
   void sendBody(const std::size_t &bytesRead) {
     this->headers["Content-Length"] = std::to_string(bytesRead);
     this->sendHeaders();
-    send(this->socket, this->body.c_str(), bytesRead, 0);
+    this->send(this->body.c_str(), bytesRead);
     this->body.clear();
   }
 
@@ -172,7 +180,7 @@ class ArnelifyTransmitter final {
     this->headers["Content-Length"] = std::to_string(bytesCompressed);
     this->sendHeaders();
 
-    send(this->socket, compressed, bytesCompressed, 0);
+    this->send(reinterpret_cast<const char*>(compressed), bytesCompressed);
     delete[] compressed;
   }
 
@@ -183,7 +191,7 @@ class ArnelifyTransmitter final {
     char *block = new char[this->blockSize];
     while (file.read(block, this->blockSize) || file.gcount() > 0) {
       const std::size_t bytesRead = file.gcount();
-      send(this->socket, block, bytesRead, 0);
+      this->send(block, bytesRead);
     }
 
     delete[] block;
@@ -202,18 +210,17 @@ class ArnelifyTransmitter final {
     this->headers["Content-Length"] = std::to_string(bytesCompressed);
     this->sendHeaders();
 
-    send(this->socket, compressed, bytesCompressed, 0);
+    this->send(reinterpret_cast<const char*>(compressed), bytesCompressed);
     delete[] compressed;
   }
 
  public:
-  ArnelifyTransmitter(const int &s, ArnelifyTransmitterOpts &o)
+  ArnelifyTransmitter(ArnelifyTransmitterOpts &o)
       : blockSize(65536),
         code(200),
         isGzip(false),
         isStatic(false),
-        opts(o),
-        socket(s) {
+        opts(o) {
     this->blockSize = this->opts.TRANSMITTER_BLOCK_SIZE_KB * 1024;
     this->resetHeaders(true);
   }
@@ -221,8 +228,7 @@ class ArnelifyTransmitter final {
   void addBody(const std::string &body) {
     const bool hasFile = !this->filePath.empty();
     if (hasFile) {
-      this->logger("Can't add body to a Response that contains a file.",
-                     true);
+      this->logger("Can't add body to a Response that contains a file.", true);
       exit(1);
     }
 
@@ -230,6 +236,18 @@ class ArnelifyTransmitter final {
   }
 
   void end() {
+    if (!this->filePath.empty()) {
+      this->body.clear();
+      return;
+    }
+
+    if (!this->body.empty()) {
+      this->filePath.clear();
+      this->isStatic = false;
+    }
+  }
+
+  void write() {
     const bool hasFile = !this->filePath.empty();
     if (hasFile) {
       this->body.clear();
@@ -255,8 +273,7 @@ class ArnelifyTransmitter final {
 
       this->code = 404;
       this->body = "{\"code\":404,\"Not found.\"}";
-      this->logger("Failed to open file: " + std::string(this->filePath),
-                     true);
+      this->logger("Failed to open file: " + std::string(this->filePath), true);
     }
 
     const std::size_t bytesRead = this->body.length();
@@ -266,6 +283,11 @@ class ArnelifyTransmitter final {
     }
 
     this->sendBody(bytesRead);
+  }
+
+  void onWrite(
+      const std::function<void(const char *, const std::size_t &)> send) {
+    this->send = send;
   }
 
   void setLogger(const ArnelifyTransmitterLogger &logger) {

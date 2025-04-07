@@ -11,8 +11,6 @@
 
 #include "contracts/opts.hpp"
 
-using ArnelifyServerReq = Json::Value;
-
 class ArnelifyReceiver final {
  private:
   int SIGNAL_ACCEPTED;
@@ -28,7 +26,7 @@ class ArnelifyReceiver final {
   bool startSize;
   const ArnelifyReceiverOpts opts;
   std::string buffer;
-  ArnelifyServerReq req;
+  Json::Value req;
 
   std::string acceptEncoding;
   std::string contentType;
@@ -779,7 +777,6 @@ class ArnelifyReceiver final {
     this->req["query"] = Json::objectValue;
 
     Json::Value _state;
-    _state["client"] = this->opts.RECEIVER_CLIENT;
     _state["cookie"] = Json::objectValue;
     _state["headers"] = Json::objectValue;
     this->req["_state"] = _state;

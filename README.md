@@ -60,6 +60,7 @@ You can find code examples <a href="https://github.com/arnelify/arnelify-server-
 | **SERVER_MAX_FILES_SIZE_TOTAL_MB** | Defines the maximum total size of all files in the form.|
 | **SERVER_MAX_FILE_SIZE_MB**| Defines the maximum size of a single file in the form.|
 | **SERVER_PORT**| Defines which port the server will listen on.|
+| **SERVER_THREAD_LIMIT**| Defines the maximum number of threads that will handle requests.|
 | **SERVER_QUEUE_LIMIT**| Defines the maximum size of the queue on the client socket.|
 | **SERVER_UPLOAD_DIR**| Specifies the upload directory for storage.|
 
@@ -77,10 +78,10 @@ We are excited to introduce the Arnelify Server for NodeJS (Bun) addon! Please n
 
 Change log:
 
-* NodeJS (Bun) addon
+* Multi-Threading
+* Minimalistic NodeJS (Bun) addon
 * Block processing in "on-the-fly" mode
 * GZIP support
-* Boost and Magic libraries have been removed
 * Significant refactoring and optimizations
 
 Please use this version with caution, as it may contain bugs and unfinished features. We are actively working on improving and expanding the server's capabilities, and we welcome your feedback and suggestions.
