@@ -250,13 +250,13 @@ class ArnelifyReceiver final {
   int setHeader(const std::string& key, const std::string& value) {
     this->req["_state"]["headers"][key] = value;
 
-    const bool isAcceptEncoding = key == "Accept-Encoding";
+    const bool isAcceptEncoding = key == "Accept-Encoding" || "accept-encoding";
     if (isAcceptEncoding) {
       this->acceptEncoding = value;
       return this->SIGNAL_FINISH;
     }
 
-    const bool isContentLength = key == "Content-Length";
+    const bool isContentLength = key == "Content-Length" || "content-length";
     if (isContentLength) {
       for (char c : value) {
         if (!isdigit(c)) {
@@ -269,7 +269,7 @@ class ArnelifyReceiver final {
       return this->SIGNAL_FINISH;
     }
 
-    const bool isContentType = key == "Content-Type";
+    const bool isContentType = key == "Content-Type" || "content-type";
     if (isContentType) {
       if (this->hasBody) {
         this->contentType = value;
@@ -288,7 +288,7 @@ class ArnelifyReceiver final {
       if (SIGNAL_BOUNDARY != this->SIGNAL_FINISH) return SIGNAL_BOUNDARY;
     }
 
-    const bool isCookie = key == "Cookie";
+    const bool isCookie = key == "Cookie" || "cookie";
     if (isCookie) {
       const int SIGNAL_COOKIE = this->setCookie(value);
       if (SIGNAL_COOKIE != this->SIGNAL_FINISH) return SIGNAL_COOKIE;
@@ -478,7 +478,8 @@ class ArnelifyReceiver final {
     while (metaEnd != std::string::npos) {
       const std::string header = meta.substr(0, metaEnd);
       const bool hasContentDisposition =
-          header.starts_with("Content-Disposition");
+          header.starts_with("Content-Disposition") ||
+          header.starts_with("content-disposition");
       if (hasContentDisposition) {
         const std::size_t nameStart = header.find("name=\"");
         const bool hasNameStart = nameStart != std::string::npos;
@@ -551,7 +552,8 @@ class ArnelifyReceiver final {
         }
       }
 
-      const bool hasContentType = header.starts_with("Content-Type");
+      const bool hasContentType = header.starts_with("Content-Type") ||
+                                  header.starts_with("content-type");
       if (hasContentType) {
         const std::size_t mimeStart = header.find(": ");
         const bool hasMime = mimeStart != std::string::npos;
