@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
-import { ArnelifyServer, ArnelifyServerOpts, Req, Res } from "../index";
+import { Http1, Http1Opts, Http1Req, Http1Res } from "../index";
 
 (function main(): number {
 
-  const opts: ArnelifyServerOpts = {
+  const opts: Http1Opts = {
     "SERVER_ALLOW_EMPTY_FILES": true,
     "SERVER_BLOCK_SIZE_KB": 64,
     "SERVER_CHARSET": "UTF-8",
@@ -17,17 +17,17 @@ import { ArnelifyServer, ArnelifyServerOpts, Req, Res } from "../index";
     "SERVER_PORT": 3001,
     "SERVER_THREAD_LIMIT": 1,
     "SERVER_QUEUE_LIMIT": 1024,
-    "SERVER_UPLOAD_DIR": "./src/storage/upload"
+    "SERVER_UPLOAD_DIR": "storage/upload"
   };
 
-  const server: ArnelifyServer = new ArnelifyServer(opts);
-  server.setHandler(async (req: Req, res: Res): Promise<void> => {
+  const http1: Http1 = new Http1(opts);
+  http1.setHandler(async (req: Http1Req, res: Http1Res): Promise<void> => {
     res.setCode(200);
     res.addBody(JSON.stringify(req));
     res.end();
   });
 
-  server.start((message: string, isError: boolean): void => {
+  http1.start((message: string, isError: boolean): void => {
     if (isError) {
       console.log(`[Arnelify Server]: Error: ${message}`);
       return;

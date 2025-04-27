@@ -1,4 +1,4 @@
-class Res {
+class Http1Res {
 
   #res: { [key: string]: any } = {};
 
@@ -111,4 +111,4 @@ class Res {
   }
 }
 
-export default Res;
+export default Http1Res;

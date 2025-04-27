@@ -1,25 +1,25 @@
 #!/usr/bin/env bun
 import ArnelifyUDS from "./uds/index";
 
-import ArnelifyServerOpts from "./contracts/opts";
-import Req from "./contracts/req";
-import Res from "./contracts/res";
+import Http1Opts from "./contracts/opts";
+import Http1Req from "./contracts/req";
+import Http1Res from "./contracts/res";
 
 /**
  * ArnelifyServer
  */
-class ArnelifyServer {
+class Http1 {
 
   #lib: any = null;
-  #opts: ArnelifyServerOpts = {};
+  #opts: Http1Opts = {};
   #uds: any = null;
 
-  constructor(opts: ArnelifyServerOpts) {
+  constructor(opts: Http1Opts) {
     this.#opts = opts;
     const socketPath: string =
       this.#opts.SERVER_SOCKET_PATH ?? "/tmp/arnelify.sock";
     this.#lib = require("../build/Release/arnelify-server.node");
-    this.#lib.server_create(JSON.stringify(this.#opts));
+    this.#lib.server_http1_create(JSON.stringify(this.#opts));
     this.#uds = new ArnelifyUDS({
       "UDS_BLOCK_SIZE_KB": this.#opts.SERVER_BLOCK_SIZE_KB,
       "UDS_SOCKET_PATH": socketPath
@@ -41,11 +41,12 @@ class ArnelifyServer {
   };
 
   /**
-   * 
+   * Handler
    * @param {Req} req
    * @param {Res} res
    */
-  #handler: (req: Req, res: Res) => Promise<void> = async (req: Req, res: Res): Promise<void> => {
+  #handler: (req: Http1Req, res: Http1Res) => Promise<void> = 
+    async (req: Http1Req, res: Http1Res): Promise<void> => {
     res.setCode(200);
     res.addBody(JSON.stringify({
       code: 200,
@@ -59,7 +60,7 @@ class ArnelifyServer {
    * Set Handler
    * @param {CallableFunction} handler
    */
-  setHandler(handler: (req: Req, res: Res) => Promise<void>): void {
+  setHandler(handler: (req: Http1Req, res: Http1Res) => Promise<void>): void {
     this.#handler = handler;
   }
 
@@ -74,7 +75,7 @@ class ArnelifyServer {
       const { content, uuid } = json;
       const { _state } = content;
       if (_state) {
-        const transmitter: Res = new Res();
+        const transmitter: Http1Res = new Http1Res();
         transmitter.setLogger(this.#logger);
         await this.#handler(content, transmitter);
 
@@ -101,23 +102,23 @@ class ArnelifyServer {
       }
     });
 
-    this.#lib.server_start();
+    this.#lib.server_http1_start();
   }
 
   /**
    * Stop
    */
   stop() {
-    this.#lib.server_stop();
+    this.#lib.server_http1_stop();
   }
 
   /**
    * Destroy
    */
   destroy() {
-    this.#lib.server_destroy();
+    this.#lib.server_http1_destroy();
   }
 }
 
-export type { ArnelifyServerOpts, Req, Res };
-export { ArnelifyServer };
+export type { Http1Opts, Http1Req, Http1Res };
+export { Http1 };

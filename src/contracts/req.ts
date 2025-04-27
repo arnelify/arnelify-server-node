@@ -1,3 +1,3 @@
-export default interface Req {
+export default interface Http1Req {
   [key: string]: any
 }
