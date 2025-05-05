@@ -23,10 +23,13 @@ class Http1 {
   bool isRunning;
   int serverSocket;
 
-  Http1IO *io;
+  Http1IO *asyncRead;
+  Http1IO *asyncHandler;
+  Http1IO *asyncWrite;
+
   const Http1Opts opts;
 
-  Http1Handler handler = [](const Http1Req &req, Http1Res res) -> void {
+  Http1Handler cb = [](const Http1Req &req, Http1Res res) -> void {
     Json::StreamWriterBuilder writer;
     writer["indentation"] = "";
     writer["emitUTF8"] = true;
@@ -52,16 +55,19 @@ class Http1 {
   Http1(Http1Opts &o) : isRunning(false), opts(o), serverSocket(0) {
     const int threadLimit =
         this->opts.HTTP1_THREAD_LIMIT > 0 ? this->opts.HTTP1_THREAD_LIMIT : 1;
-    this->io = new Http1IO(threadLimit);
+    this->asyncRead = new Http1IO(threadLimit);
+    this->asyncHandler = new Http1IO(threadLimit);
+    this->asyncWrite = new Http1IO(threadLimit);
   }
 
   ~Http1() {
     this->stop();
-    this->io->stop();
-    if (this->io != nullptr) delete this->io;
+    if (this->asyncRead) delete this->asyncRead;
+    if (this->asyncHandler) delete this->asyncHandler;
+    if (this->asyncWrite) delete this->asyncWrite;
   }
 
-  void setHandler(const Http1Handler &handler) { this->handler = handler; }
+  void handler(const Http1Handler &cb) { this->cb = cb; }
 
   void start(const Http1Logger &logger) {
     this->isRunning = true;
@@ -113,28 +119,27 @@ class Http1 {
       exit(1);
     }
 
-    this->io->onRead([this](Http1Task *task) {
-      ssize_t bytesRead = 0;
-      const std::size_t BLOCK_SIZE = this->opts.HTTP1_BLOCK_SIZE_KB * 1024;
-      char *block = new char[BLOCK_SIZE];
-      int SIGNAL_ON_BLOCK = 0;
-      while ((bytesRead = recv(task->clientSocket, block, BLOCK_SIZE, 0)) > 0) {
-        if (bytesRead == EWOULDBLOCK) {
-          delete[] block;
+    this->asyncRead->handler([this](Http1Task *task) {
+      const std::size_t blockLen = this->opts.HTTP1_BLOCK_SIZE_KB * 1024;
+      char *block = new char[blockLen];
+      int ON_RECEIVER = 0;
 
-          this->io->addRead(task);
+      while (!ON_RECEIVER) {
+        const ssize_t bytesRead = recv(task->clientSocket, block, blockLen, 0);
+        if (bytesRead == -1 && (errno == EWOULDBLOCK || errno == EAGAIN)) {
+          delete[] block;
+          this->asyncRead->addTask(task);
           return;
         }
 
-        SIGNAL_ON_BLOCK = task->receiver->onBlock(block, bytesRead);
-        if (SIGNAL_ON_BLOCK > 0) break;
+        ON_RECEIVER = task->receiver->onBlock(block, bytesRead);
       }
 
       delete[] block;
 
-      const bool isFinish = SIGNAL_ON_BLOCK == 2;
+      const bool isFinish = ON_RECEIVER == 2;
       if (isFinish) {
-        this->io->addHandler(task);
+        this->asyncHandler->addTask(task);
         return;
       }
 
@@ -151,21 +156,21 @@ class Http1 {
       task->transmitter->addBody(body);
       task->transmitter->end();
 
-      this->io->addWrite(task);
+      this->asyncWrite->addTask(task);
     });
 
-    this->io->onHandler([this](Http1Task *task) {
+    this->asyncHandler->handler([this](Http1Task *task) {
       task->transmitter->setLogger(this->logger);
       const std::string encoding = task->receiver->getEncoding();
       task->transmitter->setEncoding(encoding);
       const Http1Req req = task->receiver->finish();
       delete task->receiver;
 
-      this->handler(req, task->transmitter);
-      this->io->addWrite(task);
+      this->cb(req, task->transmitter);
+      this->asyncWrite->addTask(task);
     });
 
-    this->io->onWrite([](Http1Task *task) {
+    this->asyncWrite->handler([this](Http1Task *task) {
       task->transmitter->onWrite(
           [task](const char *block, const int bytesRead) {
             send(task->clientSocket, block, bytesRead, 0);
@@ -174,9 +179,6 @@ class Http1 {
       task->transmitter->write();
       delete task;
     });
-
-    const std::string port = std::to_string(this->opts.HTTP1_PORT);
-    this->logger("Server is running on port " + port, false);
 
     sockaddr_in clientAddr;
     socklen_t clientLen = sizeof(clientAddr);
@@ -187,6 +189,12 @@ class Http1 {
         this->opts.HTTP1_MAX_FIELDS_SIZE_TOTAL_MB, this->opts.HTTP1_MAX_FILES,
         this->opts.HTTP1_MAX_FILES_SIZE_TOTAL_MB,
         this->opts.HTTP1_MAX_FILE_SIZE_MB, this->opts.HTTP1_UPLOAD_DIR);
+    const std::string port = std::to_string(this->opts.HTTP1_PORT);
+    this->logger("Server is running on port " + port, false);
+
+    this->asyncRead->start();
+    this->asyncHandler->start();
+    this->asyncWrite->start();
 
     while (true) {
       const bool isStop = !this->isRunning;
@@ -206,15 +214,20 @@ class Http1 {
         continue;
       }
 
+      // int clientFlags = fcntl(clientSocket, F_GETFL, 0);
+      // if (clientFlags == -1 ||
+      //     fcntl(clientSocket, F_SETFL, clientFlags | O_NONBLOCK) == -1) {
+      //   this->logger("Failed to set client socket non-blocking", true);
+      //   close(clientSocket);
+      //   continue;
+      // }
+
       Http1Task *task = new Http1Task(clientSocket, opts);
-      this->io->addRead(task);
+      this->asyncRead->addTask(task);
     }
   }
 
-  void stop() {
-    this->io->stop();
-    this->isRunning = false;
-  }
+  void stop() { this->isRunning = false; }
 };
 
 #endif

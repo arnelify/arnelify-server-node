@@ -158,9 +158,8 @@ void server_http1_create(const char *cOpts) {
 
 void server_http1_destroy() { http1 = nullptr; }
 
-void server_http1_set_handler(const char *(*cHandler)(const char *),
-                        const int hasRemove) {
-  http1->setHandler([cHandler, hasRemove](const Http1Req &req,
+void server_http1_handler(const char *(*cHandler)(const char *)) {
+  http1->handler([cHandler](const Http1Req &req,
                                            Http1Res res) -> void {
     Json::StreamWriterBuilder writer;
     writer["indentation"] = "";
@@ -168,12 +167,7 @@ void server_http1_set_handler(const char *(*cHandler)(const char *),
 
     const std::string request = Json::writeString(writer, req);
     const char *cReq = request.c_str();
-    const char *cRes = cHandler(cReq);
-    if (cRes == nullptr) {
-      std::cout << "[ArnelifyServer FFI]: C error: cRes must be a valid JSON."
-                << std::endl;
-      exit(1);
-    }
+    std::string cRes = cHandler(cReq);
 
     Json::Value json;
     Json::CharReaderBuilder reader;
@@ -185,7 +179,7 @@ void server_http1_set_handler(const char *(*cHandler)(const char *),
       exit(1);
     }
 
-    if (hasRemove == 1) delete[] cRes;
+    cRes.clear();
     const bool hasCode = json.isMember("code");
     if (hasCode) {
       res->setCode(json["code"].asInt());

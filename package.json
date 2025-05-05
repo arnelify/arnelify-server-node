@@ -1,6 +1,6 @@
 {
   "name": "arnelify-server",
-  "version": "0.7.5",
+  "version": "0.7.7",
   "description": "Minimalistic NodeJS (Bun) addon which is a powerful server written in C and C++.",
   "keywords": [
     "arnelify",

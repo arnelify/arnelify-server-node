@@ -12,7 +12,7 @@ int main(int argc, char* argv[]) {
                       3, 1024, "./storage/upload");
 
   Http1 http1(http1Opts);
-  http1.setHandler([](const Http1Req& req, Http1Res res) {
+  http1.handler([](const Http1Req& req, Http1Res res) {
     Json::StreamWriterBuilder writer;
     writer["indentation"] = "";
     writer["emitUTF8"] = true;

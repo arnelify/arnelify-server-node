@@ -45,7 +45,7 @@ class Http1 {
    * @param {Req} req
    * @param {Res} res
    */
-  #handler: (req: Http1Req, res: Http1Res) => Promise<void> = 
+  #callback: (req: Http1Req, res: Http1Res) => Promise<void> = 
     async (req: Http1Req, res: Http1Res): Promise<void> => {
     res.setCode(200);
     res.addBody(JSON.stringify({
@@ -58,10 +58,10 @@ class Http1 {
 
   /**
    * Set Handler
-   * @param {CallableFunction} handler
+   * @param {CallableFunction} cb
    */
-  setHandler(handler: (req: Http1Req, res: Http1Res) => Promise<void>): void {
-    this.#handler = handler;
+  handler(cb: (req: Http1Req, res: Http1Res) => Promise<void>): void {
+    this.#callback = cb;
   }
 
   /**
@@ -77,7 +77,7 @@ class Http1 {
       if (_state) {
         const transmitter: Http1Res = new Http1Res();
         transmitter.setLogger(this.#logger);
-        await this.#handler(content, transmitter);
+        await this.#callback(content, transmitter);
 
         json.content = transmitter.toJson();
         client.write(JSON.stringify(json));

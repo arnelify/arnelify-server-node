@@ -195,7 +195,7 @@ Napi::Value server_http1_create(const Napi::CallbackInfo& args) {
       json["SERVER_UPLOAD_DIR"].asString());
 
   http1 = new Http1(opts);
-  http1->setHandler([](const Http1Req& req, Http1Res res) {
+  http1->handler([](const Http1Req& req, Http1Res res) {
     std::promise<const std::string> promise;
     std::future<const std::string> future = promise.get_future();
     std::thread thread(

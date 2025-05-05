@@ -21,7 +21,7 @@ import { Http1, Http1Opts, Http1Req, Http1Res } from "../index";
   };
 
   const http1: Http1 = new Http1(opts);
-  http1.setHandler(async (req: Http1Req, res: Http1Res): Promise<void> => {
+  http1.handler(async (req: Http1Req, res: Http1Res): Promise<void> => {
     res.setCode(200);
     res.addBody(JSON.stringify(req));
     res.end();
