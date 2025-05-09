@@ -44,13 +44,13 @@ class Http1IO {
     if (this->isRunning) return;
     this->isRunning = true;
     
-    for (int i = 0; this->threadLimit > i; ++i) {
+    for (int i = 0; this->threadLimit > i; i++) {
       std::thread thread([this]() {
         while (true) {
           Http1Task* task = nullptr;
           {
             std::unique_lock<std::mutex> lock(this->mtx);
-            cv.wait(lock, [this]() { return !this->queue.empty() && this->isRunning; });
+            cv.wait(lock, [this]() { return !this->queue.empty() || !this->isRunning; });
             if (!this->isRunning) break;
 
             task = this->queue.front();

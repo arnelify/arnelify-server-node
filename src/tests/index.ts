@@ -15,7 +15,8 @@ import { Http1, Http1Opts, Http1Req, Http1Res } from "../index";
     "SERVER_MAX_FILES_SIZE_TOTAL_MB": 60,
     "SERVER_MAX_FILE_SIZE_MB": 60,
     "SERVER_PORT": 3001,
-    "SERVER_THREAD_LIMIT": 1,
+    "SERVER_NET_CHECK_FREQ_MS": 50,
+    "SERVER_THREAD_LIMIT": 5,
     "SERVER_QUEUE_LIMIT": 1024,
     "SERVER_UPLOAD_DIR": "storage/upload"
   };

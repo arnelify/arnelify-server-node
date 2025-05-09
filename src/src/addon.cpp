@@ -140,6 +140,16 @@ Napi::Value server_http1_create(const Napi::CallbackInfo& args) {
     return env.Undefined();
   }
 
+  const bool hasNetCheckFreqMs = json.isMember("SERVER_NET_CHECK_FREQ_MS") &&
+                                 json["SERVER_NET_CHECK_FREQ_MS"].isInt();
+  if (!hasNetCheckFreqMs) {
+    Napi::TypeError::New(env,
+                         "[Arnelify Server]: C++ error: "
+                         "'SERVER_NET_CHECK_FREQ_MS' is missing.")
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
   const bool hasPort =
       json.isMember("SERVER_PORT") && json["SERVER_PORT"].isInt();
   if (!hasPort) {
@@ -150,8 +160,8 @@ Napi::Value server_http1_create(const Napi::CallbackInfo& args) {
     return env.Undefined();
   }
 
-  const bool hasThreadLimit =
-      json.isMember("SERVER_THREAD_LIMIT") && json["SERVER_THREAD_LIMIT"].isInt();
+  const bool hasThreadLimit = json.isMember("SERVER_THREAD_LIMIT") &&
+                              json["SERVER_THREAD_LIMIT"].isInt();
   if (!hasThreadLimit) {
     Napi::TypeError::New(env,
                          "[Arnelify Server]: C++ error: "
@@ -179,7 +189,7 @@ Napi::Value server_http1_create(const Napi::CallbackInfo& args) {
   if (!hasSocketPath) json["SERVER_SOCKET_PATH"] = "/tmp/arnelify.sock";
 
   UDSOpts udsOpts(json["SERVER_BLOCK_SIZE_KB"].asInt(),
-                          json["SERVER_SOCKET_PATH"].asString());
+                  json["SERVER_SOCKET_PATH"].asString());
   uds = new UDS(udsOpts);
 
   Http1Opts opts(
@@ -190,7 +200,9 @@ Napi::Value server_http1_create(const Napi::CallbackInfo& args) {
       json["SERVER_MAX_FIELDS_SIZE_TOTAL_MB"].asInt(),
       json["SERVER_MAX_FILES"].asInt(),
       json["SERVER_MAX_FILES_SIZE_TOTAL_MB"].asInt(),
-      json["SERVER_MAX_FILE_SIZE_MB"].asInt(), json["SERVER_PORT"].asInt(),
+      json["SERVER_MAX_FILE_SIZE_MB"].asInt(), 
+      json["SERVER_NET_CHECK_FREQ_MS"].asInt(),
+      json["SERVER_PORT"].asInt(),
       json["SERVER_THREAD_LIMIT"].asInt(), json["SERVER_QUEUE_LIMIT"].asInt(),
       json["SERVER_UPLOAD_DIR"].asString());
 
@@ -351,9 +363,12 @@ Napi::Value uds_stop(const Napi::CallbackInfo& info) {
 }
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
-  exports.Set("server_http1_create", Napi::Function::New(env, server_http1_create));
-  exports.Set("server_http1_destroy", Napi::Function::New(env, server_http1_destroy));
-  exports.Set("server_http1_start", Napi::Function::New(env, server_http1_start));
+  exports.Set("server_http1_create",
+              Napi::Function::New(env, server_http1_create));
+  exports.Set("server_http1_destroy",
+              Napi::Function::New(env, server_http1_destroy));
+  exports.Set("server_http1_start",
+              Napi::Function::New(env, server_http1_start));
   exports.Set("server_http1_stop", Napi::Function::New(env, server_http1_stop));
   exports.Set("uds_start", Napi::Function::New(env, uds_start));
   exports.Set("uds_stop", Napi::Function::New(env, uds_stop));

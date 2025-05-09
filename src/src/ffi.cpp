@@ -119,8 +119,8 @@ void server_http1_create(const char *cOpts) {
     exit(1);
   }
 
-  const bool hasThreadLimit =
-      json.isMember("SERVER_THREAD_LIMIT") && json["SERVER_THREAD_LIMIT"].isInt();
+  const bool hasThreadLimit = json.isMember("SERVER_THREAD_LIMIT") &&
+                              json["SERVER_THREAD_LIMIT"].isInt();
   if (!hasThreadLimit) {
     std::cout << "[Arnelify Server FFI]: C error: "
                  "'SERVER_THREAD_LIMIT' is missing."
@@ -149,25 +149,24 @@ void server_http1_create(const char *cOpts) {
       json["SERVER_MAX_FIELDS_SIZE_TOTAL_MB"].asInt(),
       json["SERVER_MAX_FILES"].asInt(),
       json["SERVER_MAX_FILES_SIZE_TOTAL_MB"].asInt(),
-      json["SERVER_MAX_FILE_SIZE_MB"].asInt(), json["SERVER_PORT"].asInt(),
+      json["SERVER_MAX_FILE_SIZE_MB"].asInt(),
+      json["SERVER_NET_CHECK_FREQ_MS"].asInt(), json["SERVER_PORT"].asInt(),
       json["SERVER_THREAD_LIMIT"].asInt(), json["SERVER_QUEUE_LIMIT"].asInt(),
       json["SERVER_UPLOAD_DIR"].asString());
-
   http1 = new Http1(opts);
 }
 
 void server_http1_destroy() { http1 = nullptr; }
 
 void server_http1_handler(const char *(*cHandler)(const char *)) {
-  http1->handler([cHandler](const Http1Req &req,
-                                           Http1Res res) -> void {
+  http1->handler([cHandler](const Http1Req &req, Http1Res res) -> void {
     Json::StreamWriterBuilder writer;
     writer["indentation"] = "";
     writer["emitUTF8"] = true;
 
     const std::string request = Json::writeString(writer, req);
     const char *cReq = request.c_str();
-    std::string cRes = cHandler(cReq);
+    const char *cRes = cHandler(cReq);
 
     Json::Value json;
     Json::CharReaderBuilder reader;
@@ -179,7 +178,6 @@ void server_http1_handler(const char *(*cHandler)(const char *)) {
       exit(1);
     }
 
-    cRes.clear();
     const bool hasCode = json.isMember("code");
     if (hasCode) {
       res->setCode(json["code"].asInt());

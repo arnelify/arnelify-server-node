@@ -126,13 +126,15 @@ class Http1 {
 
       while (!ON_RECEIVER) {
         const ssize_t bytesRead = recv(task->clientSocket, block, blockLen, 0);
-        if (bytesRead == -1 && (errno == EWOULDBLOCK || errno == EAGAIN)) {
-          delete[] block;
-          this->asyncRead->addTask(task);
-          return;
-        }
+        // if (bytesRead == -1 && (errno == EWOULDBLOCK || errno == EAGAIN)) {
+        //   delete[] block;
+        //   this->asyncRead->addTask(task);
+        //   return;
+        // }
 
-        ON_RECEIVER = task->receiver->onBlock(block, bytesRead);
+        if (bytesRead > 0) {
+          ON_RECEIVER = task->receiver->onBlock(block, bytesRead);
+        }
       }
 
       delete[] block;
@@ -182,6 +184,7 @@ class Http1 {
 
     sockaddr_in clientAddr;
     socklen_t clientLen = sizeof(clientAddr);
+    const int acceptDelay = this->opts.HTTP1_NET_CHECK_FREQ_MS;
     const Http1TaskOpts opts(
         this->opts.HTTP1_ALLOW_EMPTY_FILES, this->opts.HTTP1_BLOCK_SIZE_KB,
         this->opts.HTTP1_CHARSET, this->opts.HTTP1_GZIP,
@@ -209,6 +212,10 @@ class Http1 {
         if (errno != EWOULDBLOCK && errno != EAGAIN) {
           this->logger("Connection error", true);
           break;
+        }
+
+        if (acceptDelay) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(acceptDelay));
         }
 
         continue;
