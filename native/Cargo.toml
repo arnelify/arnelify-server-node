@@ -4,7 +4,7 @@
 name = "arnelify_server"
 description = "Multi-language server with HTTP 3.0 and WebTransport support."
 keywords = ["arnelify", "server", "quic", "http3", "webtransport"]
-version = "0.9.4"
+version = "0.9.5"
 authors = ["Arnelify", "Taron Sarkisyan"]
 license = "MIT"
 repository = "http://github.com/arnelify/arnelify-server-node"

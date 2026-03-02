@@ -1,10 +1,10 @@
 <img src="https://static.wikia.nocookie.net/arnelify/images/c/c8/Arnelify-logo-2024.png/revision/latest?cb=20240701012515" style="width:336px;" alt="Arnelify Logo" />
 
-![Arnelify Server for NodeJS](https://img.shields.io/badge/Arnelify%20Server%20for%20NodeJS-0.9.4-yellow) ![NodeJS](https://img.shields.io/badge/NodeJS-22.13.1-green) ![Bun](https://img.shields.io/badge/Bun-1.2.0-blue)
+![Arnelify Server for NodeJS](https://img.shields.io/badge/Arnelify%20Server%20for%20NodeJS-0.9.5-yellow) ![NodeJS](https://img.shields.io/badge/NodeJS-22.13.1-green) ![Bun](https://img.shields.io/badge/Bun-1.2.0-blue)
 
 ## 🚀 About
 
-**Arnelify® Server for Rust** — a multi-language server with HTTP 3.0 and WebTransport support.
+**Arnelify® Server for Node** — a multi-language server with HTTP 3.0 and WebTransport support.
 
 All supported protocols:
 | **#** | **Protocol** | **Transport** |
@@ -342,7 +342,7 @@ yarn test_http1
 ```
 
 ## ⭐ Release Notes
-Version 0.9.4 — a multi-language server with HTTP 3.0 and WebTransport support.
+Version 0.9.5 — a multi-language server with HTTP 3.0 and WebTransport support.
 
 We are excited to introduce the Arnelify Server for Node! Please note that this version is raw and still in active development.
 
