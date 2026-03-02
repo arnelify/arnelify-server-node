@@ -1,25 +1,36 @@
 {
   "name": "arnelify-server",
-  "version": "0.7.8",
-  "description": "Minimalistic NodeJS (Bun) addon which is a powerful server written in C and C++.",
-  "keywords": [
-    "arnelify",
-    "arnelify-server",
-    "arnelify-server-node",
-    "arnelify server"
-  ],
+  "version": "0.9.4",
+  "description": "Multi-language server with HTTP 3.0 and WebTransport support.",
   "author": "Arnelify",
   "license": "MIT",
-  "main": "src/index.ts",
+  "main": "build/index.js",
   "scripts": {
-    "build": "clear && node-gyp configure && node-gyp build",
-    "test": "clear && src/tests/index.ts"
+    "install": "neon build --release",
+    "build": "clear && neon build --release && tsc",
+    "test_http1": "clear && bun tests/tcp1/http1/index.ts",
+    "test_http2": "clear && bun tests/tcp1/http2/index.ts",
+    "test_ws": "clear && bun tests/tcp1/ws/index.ts",
+    "test_http3": "clear && bun tests/tcp2/http3/index.ts",
+    "test_wt": "clear && bun tests/tcp2/wt/index.ts"
   },
-  "dependencies": {
-    "node-addon-api": "^8.3.0"
-  },
+  "files": [
+    "build/",
+    "native/src/",
+    "native/artifacts.json",
+    "native/Cargo.lock",
+    "native/Cargo.toml",
+    "native/package.json",
+    "native/rustfmt.toml",
+    "src/",
+    "LICENSE",
+    "package.json",
+    "README.md",
+    "tsconfig.json"
+  ],
   "devDependencies": {
-    "@types/node": "^22.12.0"
+    "@types/node": "24.10.8",
+    "neon-cli": "0.10.1"
   },
   "homepage": "https://github.com/arnelify/arnelify-server-node#readme",
   "repository": {
@@ -28,5 +39,21 @@
   },
   "bugs": {
     "url": "https://github.com/arnelify/arnelify-server-node/issues"
-  }
+  },
+  "keywords": [
+    "arnelify",
+    "arnelify-server",
+    "arnelify-server-node",
+    "server",
+    "tcp",
+    "http",
+    "http2",
+    "ws",
+    "websocket",
+    "tcp2",
+    "quic",
+    "http3",
+    "wt",
+    "webtransport"
+  ]
 }

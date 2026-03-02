@@ -1,0 +1,46 @@
+{
+  "name": "arnelify-server",
+  "version": "0.9.4",
+  "description": "Multi-language server with HTTP 3.0 and WebTransport support.",
+  "author": "Arnelify",
+  "license": "MIT",
+  "main": "index.node",
+  "type": "commonjs",
+  "scripts": {
+    "test": "cargo test",
+    "cargo-build": "cargo build --message-format=json-render-diagnostics > cargo.log",
+    "cross-build": "cross build --message-format=json-render-diagnostics > cross.log",
+    "postcargo-build": "neon dist < cargo.log",
+    "postcross-build": "neon dist -m /target < cross.log",
+    "debug": "npm run cargo-build --",
+    "build": "npm run cargo-build -- --release",
+    "cross": "npm run cross-build -- --release"
+  },
+  "devDependencies": {
+    "@neon-rs/cli": "0.1.82"
+  },
+  "homepage": "https://github.com/arnelify/arnelify-server-node#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arnelify/arnelify-server-node.git"
+  },
+  "bugs": {
+    "url": "https://github.com/arnelify/arnelify-server-node/issues"
+  },
+  "keywords": [
+    "arnelify",
+    "arnelify-server",
+    "arnelify-server-node",
+    "arnelify server",
+    "tcp",
+    "http",
+    "http2",
+    "ws",
+    "websocket",
+    "tcp2",
+    "quic",
+    "http3",
+    "wt",
+    "webtransport"
+  ]
+}

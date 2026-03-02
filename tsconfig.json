@@ -1,24 +1,24 @@
 {
   "compilerOptions": {
-    "baseUrl": ".",
-    "paths": {
-      "contracts/*": [ "./src/contracts/*" ],
-      "tests/*": [ "./src/tests/*" ],
-      "uds/*": [ "./src/uds/*" ],
-    },
-    "resolveJsonModule": true,
-    "outDir": "./pod",
-    "noImplicitAny": true,
-    "module": "ESNext",
-    "target": "es6",
-    "jsx": "react-jsx",
-    "allowJs": true,
-    "strict": true,
-    "esModuleInterop": true,
-    "moduleResolution": "node",
+    "allowJs": false,
     "allowSyntheticDefaultImports": true,
-    "isolatedModules": true
+    "baseUrl": ".",
+    "declaration": true,
+    "declarationMap": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noImplicitAny": true,
+    "outDir": "./build",
+    "resolveJsonModule": true,
+    "rootDir": "./src",
+    "strict": true,
+    "target": "ES2020"
   },
+  "include": ["src"],
+  "exclude": ["tests", "node_modules", "build"],
   "ts-node": {
     "compilerOptions": {
       "module": "commonjs"

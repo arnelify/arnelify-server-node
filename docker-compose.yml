@@ -15,5 +15,5 @@ services:
     networks:
       - arnelify-network
     ports:
-      - "3001:3001"
+      - "4433:4433"
     tty: true

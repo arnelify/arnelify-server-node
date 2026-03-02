@@ -7,7 +7,7 @@
       - ./:/var/www/node
     healthcheck:
       start_period: 10s
-      test: ["CMD", "curl", "-f", "http://localhost:3001"]
+      test: ["CMD", "curl", "-f", "http://localhost:4433"]
       interval: 10s
       timeout: 10s
       retries: 3
@@ -20,5 +20,5 @@
     networks:
       - arnelify-network
     ports:
-      - "3001:3001"
+      - "4433:4433"
     tty: true
