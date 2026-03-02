@@ -4,7 +4,7 @@
 
 ## 🚀 About
 
-**Arnelify® Server for Node** — a multi-language server with HTTP 3.0 and WebTransport support.
+**Arnelify® Server for NodeJS** — a multi-language server with HTTP 3.0 and WebTransport support.
 
 All supported protocols:
 | **#** | **Protocol** | **Transport** |
@@ -344,7 +344,7 @@ yarn test_http1
 ## ⭐ Release Notes
 Version 0.9.5 — a multi-language server with HTTP 3.0 and WebTransport support.
 
-We are excited to introduce the Arnelify Server for Node! Please note that this version is raw and still in active development.
+We are excited to introduce the Arnelify Server for NodeJS! Please note that this version is raw and still in active development.
 
 Change log:
 
