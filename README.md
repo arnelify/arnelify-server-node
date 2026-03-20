@@ -1,6 +1,6 @@
 <img src="https://static.wikia.nocookie.net/arnelify/images/c/c8/Arnelify-logo-2024.png/revision/latest?cb=20240701012515" style="width:336px;" alt="Arnelify Logo" />
 
-![Arnelify Server for NodeJS](https://img.shields.io/badge/Arnelify%20Server%20for%20NodeJS-0.9.6-yellow) ![NodeJS](https://img.shields.io/badge/NodeJS-22.13.1-green) ![Bun](https://img.shields.io/badge/Bun-1.2.0-blue)
+![Arnelify Server for NodeJS](https://img.shields.io/badge/Arnelify%20Server%20for%20NodeJS-0.9.7-yellow) ![NodeJS](https://img.shields.io/badge/NodeJS-22.13.1-green) ![Bun](https://img.shields.io/badge/Bun-1.2.0-blue)
 
 ## 🚀 About
 
@@ -152,7 +152,7 @@ import {
 
   http3.on("/", async (ctx: Http3Ctx, stream: Http3Stream): Promise<void> => {
     const bytes: Buffer = Buffer.from(JSON.stringify(ctx));
-    stream.set_code(200);
+    await stream.set_code(200);
     await stream.push_bytes(bytes, false);
     await stream.end();
   });
@@ -280,7 +280,7 @@ import {
 
   http2.on("/", async (ctx: Http2Ctx, stream: Http2Stream): Promise<void> => {
     const bytes: Buffer = Buffer.from(JSON.stringify(ctx));
-    stream.set_code(200);
+    await stream.set_code(200);
     await stream.push_bytes(bytes, false);
     await stream.end();
   });
@@ -346,7 +346,7 @@ import {
 
   http1.on("/", async (ctx: Http1Ctx, stream: Http1Stream): Promise<void> => {
     const bytes: Buffer = Buffer.from(JSON.stringify(ctx));
-    stream.set_code(200);
+    await stream.set_code(200);
     await stream.push_bytes(bytes, false);
     await stream.end();
   });
@@ -390,7 +390,7 @@ yarn test_http1
 ```
 
 ## ⭐ Release Notes
-Version 0.9.6 — a multi-language server with HTTP 3.0 and WebTransport support.
+Version 0.9.7 — a multi-language server with HTTP 3.0 and WebTransport support.
 
 We are excited to introduce the Arnelify Server for NodeJS! Please note that this version is raw and still in active development.
 

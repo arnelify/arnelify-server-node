@@ -47,7 +47,7 @@ class WebSocketStream {
         const args = [this.id, json];
         await this.cb_send("ws_push_json", args, Buffer.alloc(0));
     }
-    set_compression(compression) {
+    async set_compression(compression) {
         const args = [this.id, compression ? compression : ""];
         this.cb_send("ws_set_compression", args, Buffer.alloc(0));
     }
@@ -98,7 +98,7 @@ class WebSocketServer {
     }
     async stop() {
         native.ws_stop(this.id);
-        this.uds.stop();
+        await this.uds.stop();
     }
 }
 exports.WebSocketServer = WebSocketServer;

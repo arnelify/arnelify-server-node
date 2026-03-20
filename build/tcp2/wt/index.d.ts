@@ -22,7 +22,7 @@ declare class WebTransportStream {
     push(payload: any, bytes: Buffer): Promise<void>;
     push_bytes(bytes: Buffer): Promise<void>;
     push_json(json: any): Promise<void>;
-    set_compression(compression: null | string): void;
+    set_compression(compression: null | string): Promise<void>;
 }
 type WebTransportHandler = (ctx: WebTransportCtx, bytes: WebTransportBytes, stream: WebTransportStream) => Promise<void>;
 declare class WebTransportServer {

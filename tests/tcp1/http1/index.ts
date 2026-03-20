@@ -31,7 +31,7 @@ import {
 
   http1.on("/", async (ctx: Http1Ctx, stream: Http1Stream): Promise<void> => {
     const bytes: Buffer = Buffer.from(JSON.stringify(ctx));
-    stream.set_code(200);
+    await stream.set_code(200);
     await stream.push_bytes(bytes, false);
     await stream.end();
   });

@@ -29,9 +29,9 @@ class Http1Stream {
         };
         this.id = id;
     }
-    add_header(key, value) {
+    async add_header(key, value) {
         const args = [this.id, key, value];
-        this.cb_send("http1_add_header", args, Buffer.alloc(0));
+        await this.cb_send("http1_add_header", args, Buffer.alloc(0));
     }
     async end() {
         const args = [this.id];
@@ -52,17 +52,17 @@ class Http1Stream {
         const args = [this.id, json, is_attachment ? 1 : 0];
         await this.cb_send("http1_push_json", args, Buffer.alloc(0));
     }
-    set_code(code) {
+    async set_code(code) {
         const args = [this.id, code];
-        this.cb_send("http1_set_code", args, Buffer.alloc(0));
+        await this.cb_send("http1_set_code", args, Buffer.alloc(0));
     }
-    set_compression(compression) {
+    async set_compression(compression) {
         const args = [this.id, compression ? compression : ""];
-        this.cb_send("http1_set_compression", args, Buffer.alloc(0));
+        await this.cb_send("http1_set_compression", args, Buffer.alloc(0));
     }
-    set_headers(headers) {
+    async set_headers(headers) {
         const args = [this.id, headers];
-        this.cb_send("http1_set_headers", args, Buffer.alloc(0));
+        await this.cb_send("http1_set_headers", args, Buffer.alloc(0));
     }
 }
 exports.Http1Stream = Http1Stream;
@@ -111,7 +111,7 @@ class Http1 {
     }
     async stop() {
         native.http1_stop(this.id);
-        this.uds.stop();
+        await this.uds.stop();
     }
 }
 exports.Http1 = Http1;

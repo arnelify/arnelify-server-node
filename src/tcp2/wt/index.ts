@@ -79,9 +79,9 @@ class WebTransportStream {
     await this.cb_send("wt_push_json", args, Buffer.alloc(0));
   }
 
-  set_compression(compression: null | string): void {
+  async set_compression(compression: null | string): Promise<void> {
     const args: any[] = [this.id, compression ? compression : ""];
-    this.cb_send("wt_set_compression", args, Buffer.alloc(0));
+    await this.cb_send("wt_set_compression", args, Buffer.alloc(0));
   }
 }
 
@@ -145,7 +145,7 @@ class WebTransportServer {
 
   async stop(): Promise<void> {
     native.wt_stop(this.id);
-    this.uds.stop();
+    await this.uds.stop();
   }
 }
 

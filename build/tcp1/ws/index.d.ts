@@ -20,7 +20,7 @@ declare class WebSocketStream {
     push(payload: any, bytes: Buffer): Promise<void>;
     push_bytes(bytes: Buffer): Promise<void>;
     push_json(json: any): Promise<void>;
-    set_compression(compression: null | string): void;
+    set_compression(compression: null | string): Promise<void>;
 }
 type WebSocketHandler = (ctx: WebSocketCtx, bytes: WebSocketBytes, stream: WebSocketStream) => Promise<void>;
 declare class WebSocketServer {

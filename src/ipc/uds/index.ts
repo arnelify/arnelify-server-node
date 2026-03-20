@@ -237,14 +237,24 @@ class UnixDomainSocket {
     const meta = Buffer.from(`${json_length}+${bytes_length}:`, "utf-8");
     const buff = Buffer.concat([meta, json_bytes, bytes]);
 
-    await this.client.write(buff);
+    return new Promise((resolve, reject) => {
+      this.client.write(buff, (err: any): void => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
   }
 
   async start(): Promise<void> {
     const req: UnixDomainSocketReq = new UnixDomainSocketReq(this.opts);
     const stream: UnixDomainSocketStream = new UnixDomainSocketStream(this.opts);
     stream.on_send(async (bytes: Buffer): Promise<void> => {
-      await this.client.write(bytes);
+      return new Promise((resolve, reject) => {
+        this.client.write(bytes, (err: any): void => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
     });
 
     this.client = net.createConnection(this.opts.socket_path);
@@ -284,7 +294,7 @@ class UnixDomainSocket {
   }
 
   async stop(): Promise<void> {
-    await this.client.end();
+    this.client.end();
   }
 }
 

@@ -21,15 +21,15 @@ declare class Http1Stream {
     topic: string;
     cb_send: (topic: string, args: any[], bytes: Buffer) => Promise<void>;
     constructor(id: number);
-    add_header(key: string, value: string): void;
+    add_header(key: string, value: string): Promise<void>;
     end(): Promise<void>;
     on_send(cb: (topic: string, args: any[], bytes: Buffer) => Promise<void>): void;
     push_bytes(bytes: Buffer, is_attachment?: boolean): Promise<void>;
     push_file(file_path: string, is_attachment: boolean): Promise<void>;
     push_json(json: any, is_attachment?: boolean): Promise<void>;
-    set_code(code: number): void;
-    set_compression(compression: null | string): void;
-    set_headers(headers: Record<string, string>[]): void;
+    set_code(code: number): Promise<void>;
+    set_compression(compression: null | string): Promise<void>;
+    set_headers(headers: Record<string, string>[]): Promise<void>;
 }
 type Http1Handler = (ctx: Http1Ctx, stream: Http1Stream) => Promise<void>;
 declare class Http1 {

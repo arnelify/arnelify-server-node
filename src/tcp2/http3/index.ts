@@ -61,9 +61,9 @@ class Http3Stream {
     this.id = id;
   }
 
-  add_header(key: string, value: string): void {
+  async add_header(key: string, value: string): Promise<void> {
     const args: any[] = [this.id, key, value];
-    this.cb_send("http3_add_header", args, Buffer.alloc(0));
+    await this.cb_send("http3_add_header", args, Buffer.alloc(0));
   }
 
   async end(): Promise<void> {
@@ -90,19 +90,19 @@ class Http3Stream {
     await this.cb_send("http3_push_json", args, Buffer.alloc(0));
   }
 
-  set_code(code: number): void {
+  async set_code(code: number): Promise<void> {
     const args: any[] = [this.id, code];
-    this.cb_send("http3_set_code", args, Buffer.alloc(0));
+    await this.cb_send("http3_set_code", args, Buffer.alloc(0));
   }
 
-  set_compression(compression: null | string): void {
+  async set_compression(compression: null | string): Promise<void> {
     const args: any[] = [this.id, compression ? compression : ""];
-    this.cb_send("http3_set_compression", args, Buffer.alloc(0));
+    await this.cb_send("http3_set_compression", args, Buffer.alloc(0));
   }
 
-  set_headers(headers: Record<string, string>[]): void {
+  async set_headers(headers: Record<string, string>[]): Promise<void> {
     const args: any[] = [this.id, headers];
-    this.cb_send("http3_set_headers", args, Buffer.alloc(0));
+    await this.cb_send("http3_set_headers", args, Buffer.alloc(0));
   }
 }
 
@@ -166,7 +166,7 @@ class Http3 {
 
   async stop(): Promise<void> {
     native.http3_stop(this.id);
-    this.uds.stop();
+    await this.uds.stop();
   }
 }
 
