@@ -1,7 +1,7 @@
 "use strict";
 // MIT LICENSE
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.WebTransport_ = exports.Http3 = exports.Http2 = exports.WebSocket_ = exports.Http1 = void 0;
+exports.WebTransportServer = exports.Http3 = exports.Http2 = exports.WebSocketServer = exports.Http1 = void 0;
 // COPYRIGHT (R) 2025 ARNELIFY. AUTHOR: TARON SARKISYAN
 // PERMISSION IS HEREBY GRANTED, FREE OF CHARGE, TO ANY PERSON OBTAINING A COPY
 // OF THIS SOFTWARE AND ASSOCIATED DOCUMENTATION FILES (THE "SOFTWARE"), TO DEAL
@@ -23,8 +23,8 @@ Object.defineProperty(exports, "Http1", { enumerable: true, get: function () { r
 const http2_1 = require("./tcp1/http2");
 Object.defineProperty(exports, "Http2", { enumerable: true, get: function () { return http2_1.Http2; } });
 const ws_1 = require("./tcp1/ws");
-Object.defineProperty(exports, "WebSocket_", { enumerable: true, get: function () { return ws_1.WebSocket_; } });
+Object.defineProperty(exports, "WebSocketServer", { enumerable: true, get: function () { return ws_1.WebSocketServer; } });
 const http3_1 = require("./tcp2/http3");
 Object.defineProperty(exports, "Http3", { enumerable: true, get: function () { return http3_1.Http3; } });
 const wt_1 = require("./tcp2/wt");
-Object.defineProperty(exports, "WebTransport_", { enumerable: true, get: function () { return wt_1.WebTransport_; } });
+Object.defineProperty(exports, "WebTransportServer", { enumerable: true, get: function () { return wt_1.WebTransportServer; } });

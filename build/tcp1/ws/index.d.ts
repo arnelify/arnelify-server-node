@@ -1,7 +1,7 @@
 import { UnixDomainSocket } from "../../ipc/uds";
 type WebSocketOpts = {
     block_size_kb: number;
-    compression: true;
+    compression: boolean;
     handshake_timeout: number;
     max_message_size_kb: number;
     ping_timeout: number;
@@ -9,22 +9,21 @@ type WebSocketOpts = {
     send_timeout: number;
     thread_limit: number;
 };
-type WebSocketCtx = [];
+type WebSocketCtx = Record<string, any>;
 type WebSocketBytes = Buffer;
 declare class WebSocketStream {
     id: number;
-    topic: string;
-    cb_send: (topic: string, args: any[], bytes: Buffer) => void;
+    cb_send: (topic: string, args: any[], bytes: Buffer) => Promise<void>;
     constructor(id: number);
-    close(): void;
-    on_send(cb: (topic: string, args: any[], bytes: Buffer) => void): void;
-    push(json: any, bytes: Buffer): void;
-    push_bytes(bytes: Buffer): void;
-    push_json(json: any): void;
+    close(): Promise<void>;
+    on_send(cb: (topic: string, args: any[], bytes: Buffer) => Promise<void>): void;
+    push(payload: any, bytes: Buffer): Promise<void>;
+    push_bytes(bytes: Buffer): Promise<void>;
+    push_json(json: any): Promise<void>;
     set_compression(compression: null | string): void;
 }
-type WebSocketHandler = (ctx: WebSocketCtx, bytes: WebSocketBytes, stream: WebSocketStream) => void;
-declare class WebSocket_ {
+type WebSocketHandler = (ctx: WebSocketCtx, bytes: WebSocketBytes, stream: WebSocketStream) => Promise<void>;
+declare class WebSocketServer {
     id: number;
     opts: WebSocketOpts;
     handlers: {
@@ -39,5 +38,5 @@ declare class WebSocket_ {
     stop(): Promise<void>;
 }
 export type { WebSocketOpts, WebSocketCtx, WebSocketBytes };
-export { WebSocket_, WebSocketStream };
+export { WebSocketServer, WebSocketStream };
 //# sourceMappingURL=index.d.ts.map

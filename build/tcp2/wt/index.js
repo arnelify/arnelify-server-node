@@ -1,7 +1,7 @@
 "use strict";
 // MIT LICENSE
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.WebTransportStream = exports.WebTransport_ = void 0;
+exports.WebTransportStream = exports.WebTransportServer = void 0;
 // COPYRIGHT (R) 2025 ARNELIFY. AUTHOR: TARON SARKISYAN
 // PERMISSION IS HEREBY GRANTED, FREE OF CHARGE, TO ANY PERSON OBTAINING A COPY
 // OF THIS SOFTWARE AND ASSOCIATED DOCUMENTATION FILES (THE "SOFTWARE"), TO DEAL
@@ -23,51 +23,37 @@ const uds_1 = require("../../ipc/uds");
 class WebTransportStream {
     constructor(id) {
         this.id = 0;
-        this.topic = "";
-        this.cb_send = (_topic, _args, bytes) => {
+        this.cb_send = async (_topic, _args, bytes) => {
             console.log(bytes);
         };
         this.id = id;
     }
-    close() {
-        const args = [
-            this.id
-        ];
-        this.cb_send("wt_close", args, Buffer.alloc(0));
+    async close() {
+        const args = [this.id];
+        await this.cb_send("wt_close", args, Buffer.alloc(0));
     }
     on_send(cb) {
         this.cb_send = cb;
     }
-    push(json, bytes) {
-        const args = [
-            this.id,
-            json
-        ];
-        this.cb_send("wt_push", args, bytes);
+    async push(payload, bytes) {
+        const args = [this.id, payload];
+        await this.cb_send("wt_push", args, bytes);
     }
-    push_bytes(bytes) {
-        const args = [
-            this.id
-        ];
-        this.cb_send("wt_push_bytes", args, bytes);
+    async push_bytes(bytes) {
+        const args = [this.id];
+        await this.cb_send("wt_push_bytes", args, bytes);
     }
-    push_json(json) {
-        const args = [
-            this.id,
-            json
-        ];
-        this.cb_send("wt_push_json", args, Buffer.alloc(0));
+    async push_json(json) {
+        const args = [this.id, json];
+        await this.cb_send("wt_push_json", args, Buffer.alloc(0));
     }
     set_compression(compression) {
-        const args = [
-            this.id,
-            compression ? compression : ""
-        ];
+        const args = [this.id, compression ? compression : ""];
         this.cb_send("wt_set_compression", args, Buffer.alloc(0));
     }
 }
 exports.WebTransportStream = WebTransportStream;
-class WebTransport_ {
+class WebTransportServer {
     constructor(opts) {
         this.id = 0;
         this.handlers = {};
@@ -75,43 +61,44 @@ class WebTransport_ {
         this.opts = opts;
         const uds_opts = {
             block_size_kb: opts.block_size_kb,
-            keep_alive: opts.send_timeout,
             socket_path: this.socket_path,
             thread_limit: opts.thread_limit
         };
         this.uds = new uds_1.UnixDomainSocket(uds_opts);
         this.id = native.wt_create(JSON.stringify({
-            keep_alive: opts.send_timeout,
             socket_path: this.socket_path,
             ...this.opts,
         }));
     }
     logger(cb) {
-        this.uds.on('wt_logger', (ctx, _bytes) => {
+        this.uds.on('wt_logger', async (ctx, _bytes) => {
             const [level, message] = ctx;
-            cb(level, message);
+            await cb(level, message);
         });
+        native.wt_logger(this.id);
     }
     on(path, cb) {
         this.handlers[path] = cb;
-        this.uds.on('wt_on', (ctx, bytes) => {
+        this.uds.on('wt_on', async (ctx, bytes) => {
             const [stream_id, handler_path, handler_ctx] = ctx;
             const stream = new WebTransportStream(stream_id);
-            stream.on_send((topic, args, buffer) => {
-                this.uds.push(topic, args, buffer);
+            stream.on_send(async (topic, args, buffer) => {
+                await this.uds.push(topic, args, buffer);
             });
-            const cb = this.handlers[handler_path];
-            cb(handler_ctx, bytes, stream);
+            const handler = this.handlers[handler_path];
+            if (handler)
+                await handler(handler_ctx, bytes, stream);
         });
         native.wt_on(this.id, path);
     }
     async start() {
+        native.wt_start_ipc(this.id);
+        await this.uds.start();
         native.wt_start(this.id);
-        this.uds.start();
     }
     async stop() {
         native.wt_stop(this.id);
         this.uds.stop();
     }
 }
-exports.WebTransport_ = WebTransport_;
+exports.WebTransportServer = WebTransportServer;

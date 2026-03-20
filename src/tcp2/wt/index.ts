@@ -30,7 +30,7 @@ import {
 type WebTransportOpts = {
   block_size_kb: number;
   cert_pem: string;
-  compression: true;
+  compression: boolean;
   handshake_timeout: number;
   key_pem: string;
   max_message_size_kb: number;
@@ -40,15 +40,14 @@ type WebTransportOpts = {
   thread_limit: number;
 };
 
-type WebTransportCtx = [];
+type WebTransportCtx = Record<string, any>;
 type WebTransportBytes = Buffer;
 
 class WebTransportStream {
   id: number = 0;
-  topic: string = "";
 
-  cb_send: (topic: string, args: any[], bytes: Buffer) => void =
-    (_topic: string, _args: any[], bytes: Buffer): void => {
+  cb_send: (topic: string, args: any[], bytes: Buffer) => Promise<void> =
+    async (_topic: string, _args: any[], bytes: Buffer): Promise<void> => {
       console.log(bytes);
     };
 
@@ -56,61 +55,39 @@ class WebTransportStream {
     this.id = id;
   }
 
-  close(): void {
-    const args: any[] = [
-      this.id
-    ];
-
-    this.cb_send("wt_close", args, Buffer.alloc(0));
+  async close(): Promise<void> {
+    const args: any[] = [this.id];
+    await this.cb_send("wt_close", args, Buffer.alloc(0));
   }
 
-  on_send(cb: (topic: string, args: any[], bytes: Buffer) => void): void {
+  on_send(cb: (topic: string, args: any[], bytes: Buffer) => Promise<void>): void {
     this.cb_send = cb;
   }
 
-  push(json: any, bytes: Buffer): void {
-    const args: any[] = [
-      this.id,
-      json
-    ];
-
-    this.cb_send("wt_push", args, bytes);
+  async push(payload: any, bytes: Buffer): Promise<void> {
+    const args: any[] = [this.id, payload];
+    await this.cb_send("wt_push", args, bytes);
   }
 
-  push_bytes(bytes: Buffer): void {
-    const args: any[] = [
-      this.id
-    ];
-
-    this.cb_send("wt_push_bytes", args, bytes);
+  async push_bytes(bytes: Buffer): Promise<void> {
+    const args: any[] = [this.id];
+    await this.cb_send("wt_push_bytes", args, bytes);
   }
 
-  push_json(json: any): void {
-    const args: any[] = [
-      this.id,
-      json
-    ];
-
-    this.cb_send("wt_push_json", args, Buffer.alloc(0));
+  async push_json(json: any): Promise<void> {
+    const args: any[] = [this.id, json];
+    await this.cb_send("wt_push_json", args, Buffer.alloc(0));
   }
 
   set_compression(compression: null | string): void {
-    const args: any[] = [
-      this.id,
-      compression ? compression : ""
-    ];
-
+    const args: any[] = [this.id, compression ? compression : ""];
     this.cb_send("wt_set_compression", args, Buffer.alloc(0));
   }
 }
 
-type WebTransportHandler = (
-  ctx: WebTransportCtx, 
-  bytes: WebTransportBytes, 
-  stream: WebTransportStream
-) => void;
+type WebTransportHandler = (ctx: WebTransportCtx, bytes: WebTransportBytes, stream: WebTransportStream) => Promise<void>;
 
-class WebTransport_ {
+class WebTransportServer {
   id: number = 0;
   opts: WebTransportOpts;
   handlers: { [key: string]: WebTransportHandler } = {};
@@ -122,47 +99,48 @@ class WebTransport_ {
 
     const uds_opts: UnixDomainSocketOpts = {
       block_size_kb: opts.block_size_kb,
-      keep_alive: opts.send_timeout,
       socket_path: this.socket_path,
       thread_limit: opts.thread_limit
     };
 
     this.uds = new UnixDomainSocket(uds_opts);
     this.id = native.wt_create(JSON.stringify({
-      keep_alive: opts.send_timeout,
       socket_path: this.socket_path,
       ...this.opts,
     }));
   }
 
   logger(cb: any): void {
-    this.uds.on('wt_logger', (ctx: UnixDomainSocketCtx, _bytes: UnixDomainSocketBytes): void => {
+    this.uds.on('wt_logger', async (ctx: UnixDomainSocketCtx, _bytes: UnixDomainSocketBytes): Promise<void> => {
       const [level, message] = ctx;
-      cb(level, message);
+      await cb(level, message);
     });
+
+    native.wt_logger(this.id);
   }
 
   on(path: string, cb: WebTransportHandler): void {
     this.handlers[path] = cb;
 
-    this.uds.on('wt_on', (ctx: UnixDomainSocketCtx, bytes: UnixDomainSocketBytes): void => {
+    this.uds.on('wt_on', async (ctx: UnixDomainSocketCtx, bytes: UnixDomainSocketBytes): Promise<void> => {
       const [stream_id, handler_path, handler_ctx] = ctx;
 
       const stream = new WebTransportStream(stream_id);
-      stream.on_send((topic, args, buffer): void => {
-        this.uds.push(topic, args, buffer);
+      stream.on_send(async (topic, args, buffer): Promise<void> => {
+        await this.uds.push(topic, args, buffer);
       });
 
-      const cb = this.handlers[handler_path];
-      cb(handler_ctx, bytes, stream);
+      const handler = this.handlers[handler_path];
+      if (handler) await handler(handler_ctx, bytes, stream);
     });
 
     native.wt_on(this.id, path);
   }
 
   async start(): Promise<void> {
+    native.wt_start_ipc(this.id);
+    await this.uds.start();
     native.wt_start(this.id);
-    this.uds.start();
   }
 
   async stop(): Promise<void> {
@@ -172,4 +150,4 @@ class WebTransport_ {
 }
 
 export type { WebTransportOpts, WebTransportCtx, WebTransportBytes };
-export { WebTransport_, WebTransportStream };
+export { WebTransportServer, WebTransportStream };

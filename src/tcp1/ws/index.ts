@@ -29,7 +29,7 @@ import {
 
 type WebSocketOpts = {
   block_size_kb: number;
-  compression: true;
+  compression: boolean;
   handshake_timeout: number;
   max_message_size_kb: number;
   ping_timeout: number;
@@ -38,15 +38,14 @@ type WebSocketOpts = {
   thread_limit: number;
 };
 
-type WebSocketCtx = [];
+type WebSocketCtx = Record<string, any>;
 type WebSocketBytes = Buffer;
 
 class WebSocketStream {
   id: number = 0;
-  topic: string = "";
 
-  cb_send: (topic: string, args: any[], bytes: Buffer) => void =
-    (_topic: string, _args: any[], bytes: Buffer): void => {
+  cb_send: (topic: string, args: any[], bytes: Buffer) => Promise<void> =
+    async (_topic: string, _args: any[], bytes: Buffer): Promise<void> => {
       console.log(bytes);
     };
 
@@ -54,61 +53,39 @@ class WebSocketStream {
     this.id = id;
   }
 
-  close(): void {
-    const args: any[] = [
-      this.id
-    ];
-
-    this.cb_send("ws_close", args, Buffer.alloc(0));
+  async close(): Promise<void> {
+    const args: any[] = [this.id];
+    await this.cb_send("ws_close", args, Buffer.alloc(0));
   }
 
-  on_send(cb: (topic: string, args: any[], bytes: Buffer) => void): void {
+  on_send(cb: (topic: string, args: any[], bytes: Buffer) => Promise<void>): void {
     this.cb_send = cb;
   }
 
-  push(json: any, bytes: Buffer): void {
-    const args: any[] = [
-      this.id,
-      json
-    ];
-
-    this.cb_send("ws_push", args, bytes);
+  async push(payload: any, bytes: Buffer): Promise<void> {
+    const args: any[] = [this.id, payload];
+    await this.cb_send("ws_push", args, bytes);
   }
 
-  push_bytes(bytes: Buffer): void {
-    const args: any[] = [
-      this.id
-    ];
-
-    this.cb_send("ws_push_bytes", args, bytes);
+  async push_bytes(bytes: Buffer): Promise<void> {
+    const args: any[] = [this.id];
+    await this.cb_send("ws_push_bytes", args, bytes);
   }
 
-  push_json(json: any): void {
-    const args: any[] = [
-      this.id,
-      json
-    ];
-
-    this.cb_send("ws_push_json", args, Buffer.alloc(0));
+  async push_json(json: any): Promise<void> {
+    const args: any[] = [this.id, json];
+    await this.cb_send("ws_push_json", args, Buffer.alloc(0));
   }
 
   set_compression(compression: null | string): void {
-    const args: any[] = [
-      this.id,
-      compression ? compression : ""
-    ];
-
+    const args: any[] = [this.id, compression ? compression : ""];
     this.cb_send("ws_set_compression", args, Buffer.alloc(0));
   }
 }
 
-type WebSocketHandler = (
-  ctx: WebSocketCtx, 
-  bytes: WebSocketBytes, 
-  stream: WebSocketStream
-) => void;
+type WebSocketHandler = (ctx: WebSocketCtx, bytes: WebSocketBytes, stream: WebSocketStream) => Promise<void>;
 
-class WebSocket_ {
+class WebSocketServer {
   id: number = 0;
   opts: WebSocketOpts;
   handlers: { [key: string]: WebSocketHandler } = {};
@@ -120,47 +97,48 @@ class WebSocket_ {
 
     const uds_opts: UnixDomainSocketOpts = {
       block_size_kb: opts.block_size_kb,
-      keep_alive: opts.send_timeout,
       socket_path: this.socket_path,
       thread_limit: opts.thread_limit
     };
 
     this.uds = new UnixDomainSocket(uds_opts);
     this.id = native.ws_create(JSON.stringify({
-      keep_alive: opts.send_timeout,
       socket_path: this.socket_path,
       ...this.opts,
     }));
   }
 
   logger(cb: any): void {
-    this.uds.on('ws_logger', (ctx: UnixDomainSocketCtx, _bytes: UnixDomainSocketBytes): void => {
+    this.uds.on('ws_logger', async (ctx: UnixDomainSocketCtx, _bytes: UnixDomainSocketBytes): Promise<void> => {
       const [level, message] = ctx;
-      cb(level, message);
+      await cb(level, message);
     });
+
+    native.ws_logger(this.id);
   }
 
   on(path: string, cb: WebSocketHandler): void {
     this.handlers[path] = cb;
 
-    this.uds.on('ws_on', (ctx: UnixDomainSocketCtx, bytes: UnixDomainSocketBytes): void => {
+    this.uds.on('ws_on', async (ctx: UnixDomainSocketCtx, bytes: UnixDomainSocketBytes): Promise<void> => {
       const [stream_id, handler_path, handler_ctx] = ctx;
 
       const stream = new WebSocketStream(stream_id);
-      stream.on_send((topic, args, buffer): void => {
-        this.uds.push(topic, args, buffer);
+      stream.on_send(async (topic, args, buffer): Promise<void> => {
+        await this.uds.push(topic, args, buffer);
       });
 
-      const cb = this.handlers[handler_path];
-      cb(handler_ctx, bytes, stream);
+      const handler = this.handlers[handler_path];
+      if (handler) await handler(handler_ctx, bytes, stream);
     });
 
     native.ws_on(this.id, path);
   }
 
   async start(): Promise<void> {
+    native.ws_start_ipc(this.id);
+    await this.uds.start();
     native.ws_start(this.id);
-    this.uds.start();
   }
 
   async stop(): Promise<void> {
@@ -170,4 +148,4 @@ class WebSocket_ {
 }
 
 export type { WebSocketOpts, WebSocketCtx, WebSocketBytes };
-export { WebSocket_, WebSocketStream };
+export { WebSocketServer, WebSocketStream };

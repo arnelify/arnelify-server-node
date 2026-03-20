@@ -17,23 +17,23 @@ type Http3Opts = {
     storage_path: string;
     thread_limit: number;
 };
-type Http3Ctx = [];
+type Http3Ctx = Record<string, any>;
 declare class Http3Stream {
     id: number;
     topic: string;
-    cb_send: (topic: string, args: any[], bytes: Buffer) => void;
+    cb_send: (topic: string, args: any[], bytes: Buffer) => Promise<void>;
     constructor(id: number);
     add_header(key: string, value: string): void;
-    end(): void;
-    on_send(cb: (topic: string, args: any[], bytes: Buffer) => void): void;
-    push_bytes(bytes: Buffer, is_attachment?: boolean): void;
-    push_file(file_path: string, is_attachment: boolean): void;
-    push_json(json: any, is_attachment?: boolean): void;
+    end(): Promise<void>;
+    on_send(cb: (topic: string, args: any[], bytes: Buffer) => Promise<void>): void;
+    push_bytes(bytes: Buffer, is_attachment?: boolean): Promise<void>;
+    push_file(file_path: string, is_attachment: boolean): Promise<void>;
+    push_json(json: any, is_attachment?: boolean): Promise<void>;
     set_code(code: number): void;
     set_compression(compression: null | string): void;
     set_headers(headers: Record<string, string>[]): void;
 }
-type Http3Handler = (ctx: Http3Ctx, stream: Http3Stream) => void;
+type Http3Handler = (ctx: Http3Ctx, stream: Http3Stream) => Promise<void>;
 declare class Http3 {
     id: number;
     opts: Http3Opts;

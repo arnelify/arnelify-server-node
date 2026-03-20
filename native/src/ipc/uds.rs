@@ -25,17 +25,14 @@ use std::{
   io::{Error, ErrorKind},
   path::Path,
   process,
-  sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
-  },
+  sync::{Arc, Mutex},
 };
 
 use tokio::{
   io::{AsyncReadExt, AsyncWriteExt},
   net::UnixListener,
   runtime::{Builder, Runtime},
-  sync::mpsc,
+  sync::{Notify, mpsc},
 };
 
 pub type UnixDomainSocketBytes = Vec<u8>;
@@ -49,7 +46,6 @@ enum StreamEvent {
 #[derive(Clone, Default)]
 pub struct UnixDomainSocketOpts {
   pub block_size_kb: usize,
-  pub keep_alive: u8,
   pub socket_path: String,
   pub thread_limit: u64,
 }
@@ -295,8 +291,8 @@ pub struct UnixDomainSocket {
   opts: UnixDomainSocketOpts,
   cb_logger: Arc<Mutex<Arc<UnixDomainSocketLogger>>>,
   handlers: Arc<Mutex<HashMap<String, Arc<UnixDomainSocketHandler>>>>,
-  running: Arc<AtomicBool>,
   stream: Arc<Mutex<Option<Arc<Mutex<UnixDomainSocketStream>>>>>,
+  shutdown: Arc<Notify>,
 }
 
 impl UnixDomainSocket {
@@ -307,13 +303,135 @@ impl UnixDomainSocket {
         println!("[Arnelify Server]: {}", message);
       }))),
       handlers: Arc::new(Mutex::new(HashMap::new())),
-      running: Arc::new(AtomicBool::new(false)),
       stream: Arc::new(Mutex::new(None)),
+      shutdown: Arc::new(Notify::new()),
     }
   }
 
-  pub fn get_keep_alive(&self) -> u8 {
-    self.opts.keep_alive
+  async fn acceptor(
+    &self,
+    listener: &UnixListener,
+    logger_rt: Arc<Mutex<Arc<UnixDomainSocketLogger>>>,
+    handlers_rt: Arc<Mutex<HashMap<String, Arc<UnixDomainSocketHandler>>>>,
+    opts_rt: Arc<UnixDomainSocketOpts>,
+  ) -> () {
+    match listener.accept().await {
+      Ok((socket, _addr)) => {
+        let (mut reader, mut writer) = socket.into_split();
+
+        let logger_accept: Arc<Mutex<Arc<UnixDomainSocketLogger>>> = Arc::clone(&logger_rt);
+        let handlers_accept: Arc<Mutex<HashMap<String, Arc<UnixDomainSocketHandler>>>> =
+          Arc::clone(&handlers_rt);
+        let opts_accept: Arc<UnixDomainSocketOpts> = Arc::clone(&opts_rt);
+
+        let (tx, mut rx) = mpsc::channel::<StreamEvent>(32);
+        let stream: Arc<Mutex<UnixDomainSocketStream>> = Arc::new(Mutex::new(
+          UnixDomainSocketStream::new((*opts_accept).clone()),
+        ));
+
+        {
+          let mut stream_lock: std::sync::MutexGuard<'_, UnixDomainSocketStream> =
+            stream.lock().unwrap();
+          stream_lock.on_send(Arc::new({
+            let tx: mpsc::Sender<StreamEvent> = tx.clone();
+            move |chunk: Vec<u8>, flush: bool| {
+              let _ = tx.try_send(StreamEvent::BodyChunk { chunk, flush });
+            }
+          }));
+        }
+
+        {
+          let mut stream_lock: std::sync::MutexGuard<
+            '_,
+            Option<Arc<Mutex<UnixDomainSocketStream>>>,
+          > = self.stream.lock().unwrap();
+          *stream_lock = Some(stream.clone());
+        }
+
+        // WRITE TASK
+        tokio::spawn(async move {
+          while let Some(event) = rx.recv().await {
+            match event {
+              StreamEvent::BodyChunk { chunk, flush } => {
+                let _ = writer.write_all(&chunk).await;
+                if flush {
+                  writer.flush().await.unwrap();
+                }
+              }
+            }
+          }
+        });
+
+        // READ TASK
+        tokio::spawn(async move {
+          let block_size: usize = opts_accept.block_size_kb * 1024;
+          let mut buff: Vec<u8> = vec![0u8; block_size];
+          let mut req: UnixDomainSocketReq = UnixDomainSocketReq::new((*opts_accept).clone());
+
+          loop {
+            match reader.read(&mut buff).await {
+              Ok(bytes_read) => {
+                if bytes_read == 0 {
+                  let logger_lock: std::sync::MutexGuard<'_, Arc<UnixDomainSocketLogger>> =
+                    logger_accept.lock().unwrap();
+                  logger_lock("warning", &format!("Client disconnected."));
+                  break;
+                }
+
+                req.add(&buff[..bytes_read]);
+
+                loop {
+                  match req.read_block() {
+                    Ok(Some(_)) => {
+                      let topic: String = req.get_topic();
+                      let ctx_handler: Arc<Mutex<UnixDomainSocketCtx>> =
+                        Arc::new(Mutex::new(req.get_ctx()));
+                      let bytes_handler: Arc<Mutex<UnixDomainSocketBytes>> =
+                        Arc::new(Mutex::new(req.get_bytes().to_vec()));
+
+                      req.reset();
+                      let handler_opt: Option<Arc<UnixDomainSocketHandler>> = {
+                        let handlers_lock: std::sync::MutexGuard<
+                          '_,
+                          HashMap<String, Arc<UnixDomainSocketHandler>>,
+                        > = handlers_accept.lock().unwrap();
+                        handlers_lock.get(&topic).cloned()
+                      };
+
+                      if let Some(handler) = handler_opt {
+                        handler(ctx_handler, bytes_handler);
+                      }
+                    }
+                    Ok(None) => {}
+                    Err(_) => {
+                      let logger_lock: std::sync::MutexGuard<'_, Arc<UnixDomainSocketLogger>> =
+                        logger_accept.lock().unwrap();
+                      logger_lock("error", &format!("Block read error."));
+                      process::exit(1);
+                    }
+                  }
+
+                  if req.is_empty() {
+                    break;
+                  }
+                }
+              }
+              Err(_) => {
+                let logger_lock: std::sync::MutexGuard<'_, Arc<UnixDomainSocketLogger>> =
+                  logger_accept.lock().unwrap();
+                logger_lock("error", &format!("Socket read error."));
+                break;
+              }
+            }
+          }
+        });
+      }
+      Err(e) => {
+        let logger_lock: std::sync::MutexGuard<'_, Arc<UnixDomainSocketLogger>> =
+          logger_rt.lock().unwrap();
+        logger_lock("danger", &format!("Acceptor error: {}", e));
+      }
+    }
   }
 
   pub fn _logger(&self, cb: Arc<UnixDomainSocketLogger>) -> () {
@@ -338,15 +456,11 @@ impl UnixDomainSocket {
   }
 
   pub fn start(&self, on_start: Arc<dyn Fn() + Send + Sync>) -> () {
-    if self.running.swap(true, Ordering::SeqCst) {
-      return;
-    }
-
-    let running_rt: Arc<AtomicBool> = Arc::clone(&self.running);
     let logger_rt: Arc<Mutex<Arc<UnixDomainSocketLogger>>> = Arc::clone(&self.cb_logger);
     let handlers_rt: Arc<Mutex<HashMap<String, Arc<UnixDomainSocketHandler>>>> =
       Arc::clone(&self.handlers);
     let opts_rt: Arc<UnixDomainSocketOpts> = Arc::new(self.opts.clone());
+    let shutdown_rt: Arc<Notify> = Arc::clone(&self.shutdown);
 
     if Path::new(&opts_rt.socket_path).exists() {
       match std::fs::remove_file(&opts_rt.socket_path) {
@@ -371,10 +485,7 @@ impl UnixDomainSocket {
 
     rt.block_on(async move {
       let listener: UnixListener = match UnixListener::bind(&opts_rt.socket_path) {
-        Ok(v) => {
-          on_start();
-          v
-        }
+        Ok(v) => v,
         Err(_) => {
           let logger_lock: std::sync::MutexGuard<'_, Arc<UnixDomainSocketLogger>> =
             logger_rt.lock().unwrap();
@@ -386,129 +497,25 @@ impl UnixDomainSocket {
         }
       };
 
-      while running_rt.load(Ordering::SeqCst) {
-        match listener.accept().await {
-          Ok((socket, _addr)) => {
-            let (mut reader, mut writer) = socket.into_split();
+      on_start();
 
-            let logger_accept: Arc<Mutex<Arc<UnixDomainSocketLogger>>> = Arc::clone(&logger_rt);
-            let handlers_accept: Arc<Mutex<HashMap<String, Arc<UnixDomainSocketHandler>>>> =
-              Arc::clone(&handlers_rt);
-            let opts_accept: Arc<UnixDomainSocketOpts> = Arc::clone(&opts_rt);
-
-            let (tx, mut rx) = mpsc::channel::<StreamEvent>(32);
-            let stream: Arc<Mutex<UnixDomainSocketStream>> = Arc::new(Mutex::new(
-              UnixDomainSocketStream::new((*opts_accept).clone()),
-            ));
-
-            {
-              let mut stream_lock: std::sync::MutexGuard<'_, UnixDomainSocketStream> =
-                stream.lock().unwrap();
-              stream_lock.on_send(Arc::new({
-                let tx: mpsc::Sender<StreamEvent> = tx.clone();
-                move |chunk: Vec<u8>, flush: bool| {
-                  let _ = tx.try_send(StreamEvent::BodyChunk { chunk, flush });
-                }
-              }));
-            }
-
-            {
-              let mut stream_lock: std::sync::MutexGuard<
-                '_,
-                Option<Arc<Mutex<UnixDomainSocketStream>>>,
-              > = self.stream.lock().unwrap();
-              *stream_lock = Some(stream.clone());
-            }
-
-            // WRITE TASK
-            tokio::spawn(async move {
-              while let Some(event) = rx.recv().await {
-                match event {
-                  StreamEvent::BodyChunk { chunk, flush } => {
-                    let _ = writer.write_all(&chunk).await;
-                    if flush {
-                      writer.flush().await.unwrap();
-                    }
-                  }
-                }
-              }
-            });
-
-            // READ TASK
-            tokio::spawn(async move {
-              let block_size: usize = opts_accept.block_size_kb * 1024;
-              let mut buff: Vec<u8> = vec![0u8; block_size];
-              let mut req: UnixDomainSocketReq = UnixDomainSocketReq::new((*opts_accept).clone());
-
-              loop {
-                match reader.read(&mut buff).await {
-                  Ok(bytes_read) => {
-                    if bytes_read == 0 {
-                      let logger_lock: std::sync::MutexGuard<'_, Arc<UnixDomainSocketLogger>> =
-                        logger_accept.lock().unwrap();
-                      logger_lock("warning", &format!("Client disconnected."));
-                      break;
-                    }
-
-                    req.add(&buff[..bytes_read]);
-
-                    loop {
-                      match req.read_block() {
-                        Ok(Some(_)) => {
-                          let topic: String = req.get_topic();
-                          let ctx_handler: Arc<Mutex<UnixDomainSocketCtx>> =
-                            Arc::new(Mutex::new(req.get_ctx()));
-                          let bytes_handler: Arc<Mutex<UnixDomainSocketBytes>> =
-                            Arc::new(Mutex::new(req.get_bytes().to_vec()));
-
-                          req.reset();
-                          let handler_opt: Option<Arc<UnixDomainSocketHandler>> = {
-                            let handlers_lock: std::sync::MutexGuard<
-                              '_,
-                              HashMap<String, Arc<UnixDomainSocketHandler>>,
-                            > = handlers_accept.lock().unwrap();
-                            handlers_lock.get(&topic).cloned()
-                          };
-
-                          if let Some(handler) = handler_opt {
-                            handler(ctx_handler, bytes_handler);
-                          }
-                        }
-                        Ok(None) => {}
-                        Err(_) => {
-                          let logger_lock: std::sync::MutexGuard<'_, Arc<UnixDomainSocketLogger>> =
-                            logger_accept.lock().unwrap();
-                          logger_lock("error", &format!("Block read error."));
-                          process::exit(1);
-                        }
-                      }
-
-                      if req.is_empty() {
-                        break;
-                      }
-                    }
-                  }
-                  Err(_) => {
-                    let logger_lock: std::sync::MutexGuard<'_, Arc<UnixDomainSocketLogger>> =
-                      logger_accept.lock().unwrap();
-                    logger_lock("error", &format!("Socket read error."));
-                    break;
-                  }
-                }
-              }
-            });
+      loop {
+        tokio::select! {
+          _ = shutdown_rt.notified() => {
+            break;
           }
-          Err(e) => {
-            let logger_lock: std::sync::MutexGuard<'_, Arc<UnixDomainSocketLogger>> =
-              logger_rt.lock().unwrap();
-            logger_lock("danger", &format!("Acceptor error: {}", e));
-          }
+          _ = self.acceptor(
+            &listener,
+            Arc::clone(&logger_rt),
+            Arc::clone(&handlers_rt),
+            Arc::clone(&opts_rt)
+          ) => {}
         }
       }
     });
   }
 
   pub fn stop(&self) -> () {
-    self.running.store(false, Ordering::SeqCst);
+    self.shutdown.notify_waiters();
   }
 }

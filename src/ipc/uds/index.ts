@@ -25,7 +25,6 @@ import net from "net";
 type UnixDomainSocketBytes = Buffer;
 interface UnixDomainSocketOpts {
   block_size_kb: number,
-  keep_alive: number,
   socket_path: string,
   thread_limit: number,
 };
@@ -172,7 +171,7 @@ class UnixDomainSocketStream {
   opts: UnixDomainSocketOpts;
   topic: null | string = null;
 
-  cb_send = (bytes: Buffer): void => {
+  cb_send = async (bytes: Buffer): Promise<void> => {
     console.log(bytes);
   };
 
@@ -180,11 +179,11 @@ class UnixDomainSocketStream {
     this.opts = opts;
   }
 
-  on_send(cb: (bytes: Buffer) => void): void {
+  on_send(cb: (bytes: Buffer) => Promise<void>): void {
     this.cb_send = cb;
   }
 
-  push(payload: UnixDomainSocketRes, bytes: Buffer): void {
+  async push(payload: UnixDomainSocketRes, bytes: Buffer): Promise<void> {
     const json = Buffer.from(JSON.stringify({
       topic: this.topic,
       payload
@@ -201,50 +200,33 @@ class UnixDomainSocketStream {
   }
 }
 
-type UnixDomainSocketHandler = (
-  ctx: UnixDomainSocketCtx,
-  bytes: UnixDomainSocketBytes
-) => void;
-
-type UnixDomainSocketLogger = (level: string, message: string) => void;
+type UnixDomainSocketHandler = (ctx: UnixDomainSocketCtx, bytes: UnixDomainSocketBytes) => Promise<void>;
+type UnixDomainSocketLogger = (level: string, message: string) => Promise<void>;
 
 class UnixDomainSocket {
+  opts: UnixDomainSocketOpts;
   client: any;
+  cb_handlers: Record<string, UnixDomainSocketHandler> = {};
 
-  cb_logger = (_level: string, message: string): void => {
+  cb_logger = async (_level: string, message: string): Promise<void> => {
     console.log(message);
   };
-
-  cb_handlers: {
-    [key: string]: (
-      ctx: UnixDomainSocketCtx,
-      bytes: UnixDomainSocketBytes
-    ) => void
-  } = {};
-
-  opts: UnixDomainSocketOpts;
 
   constructor(opts: UnixDomainSocketOpts) {
     this.opts = opts;
   }
 
-  logger(cb: (level: string, message: string) => void): void {
+  logger(cb: UnixDomainSocketLogger): void {
     this.cb_logger = cb;
   }
 
-  on(
-    topic: string,
-    cb: (
-      ctx: UnixDomainSocketCtx,
-      bytes: UnixDomainSocketBytes
-    ) => void
-  ): void {
+  on(topic: string, cb: UnixDomainSocketHandler): void {
     this.cb_handlers[topic] = cb;
   }
 
-  push(topic: string, payload: any, bytes: Buffer): void {
+  async push(topic: string, payload: any, bytes: Buffer): Promise<void> {
     if (!this.client) {
-      this.cb_logger("error", `No client connected for push: ${topic}`);
+      await this.cb_logger("error", `No client connected for push: ${topic}`);
       return;
     }
 
@@ -254,18 +236,19 @@ class UnixDomainSocket {
     const bytes_length = bytes.length;
     const meta = Buffer.from(`${json_length}+${bytes_length}:`, "utf-8");
     const buff = Buffer.concat([meta, json_bytes, bytes]);
-    this.client.write(buff);
+
+    await this.client.write(buff);
   }
 
   async start(): Promise<void> {
     const req: UnixDomainSocketReq = new UnixDomainSocketReq(this.opts);
     const stream: UnixDomainSocketStream = new UnixDomainSocketStream(this.opts);
-    stream.on_send((bytes: Buffer): void => {
-      this.client.write(bytes);
+    stream.on_send(async (bytes: Buffer): Promise<void> => {
+      await this.client.write(bytes);
     });
 
     this.client = net.createConnection(this.opts.socket_path);
-    this.client.on('data', (bytes: Buffer): void => {
+    this.client.on('data', async (bytes: Buffer): Promise<void> => {
       req.add(bytes);
 
       while (true) {
@@ -280,10 +263,10 @@ class UnixDomainSocket {
 
           if (this.cb_handlers.hasOwnProperty(topic)) {
             const handler: UnixDomainSocketHandler = this.cb_handlers[topic];
-            handler(json, bytes);
+            if (handler) await handler(json, bytes);
           }
         } else if (typeof res === 'string') {
-          this.cb_logger("error", res);
+          await this.cb_logger("error", res);
           process.exit(1);
         }
 
@@ -291,17 +274,17 @@ class UnixDomainSocket {
       }
     });
 
-    this.client.on('error', (e: any): void => {
-      this.cb_logger('error', `Connection error: ${e.message}`);
+    this.client.on('error', async (e: any): Promise<void> => {
+      await this.cb_logger('error', `Connection error: ${e.message}`);
     });
 
-    this.client.on('close', (): void => {
-      this.cb_logger('error', 'Connection closed');
+    this.client.on('close', async (): Promise<void> => {
+      await this.cb_logger('error', 'Connection closed');
     });
   }
 
-  stop(): void {
-    this.client.end();
+  async stop(): Promise<void> {
+    await this.client.end();
   }
 }
 

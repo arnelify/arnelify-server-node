@@ -2,7 +2,7 @@ import { UnixDomainSocket } from "../../ipc/uds";
 type WebTransportOpts = {
     block_size_kb: number;
     cert_pem: string;
-    compression: true;
+    compression: boolean;
     handshake_timeout: number;
     key_pem: string;
     max_message_size_kb: number;
@@ -11,22 +11,21 @@ type WebTransportOpts = {
     send_timeout: number;
     thread_limit: number;
 };
-type WebTransportCtx = [];
+type WebTransportCtx = Record<string, any>;
 type WebTransportBytes = Buffer;
 declare class WebTransportStream {
     id: number;
-    topic: string;
-    cb_send: (topic: string, args: any[], bytes: Buffer) => void;
+    cb_send: (topic: string, args: any[], bytes: Buffer) => Promise<void>;
     constructor(id: number);
-    close(): void;
-    on_send(cb: (topic: string, args: any[], bytes: Buffer) => void): void;
-    push(json: any, bytes: Buffer): void;
-    push_bytes(bytes: Buffer): void;
-    push_json(json: any): void;
+    close(): Promise<void>;
+    on_send(cb: (topic: string, args: any[], bytes: Buffer) => Promise<void>): void;
+    push(payload: any, bytes: Buffer): Promise<void>;
+    push_bytes(bytes: Buffer): Promise<void>;
+    push_json(json: any): Promise<void>;
     set_compression(compression: null | string): void;
 }
-type WebTransportHandler = (ctx: WebTransportCtx, bytes: WebTransportBytes, stream: WebTransportStream) => void;
-declare class WebTransport_ {
+type WebTransportHandler = (ctx: WebTransportCtx, bytes: WebTransportBytes, stream: WebTransportStream) => Promise<void>;
+declare class WebTransportServer {
     id: number;
     opts: WebTransportOpts;
     handlers: {
@@ -41,5 +40,5 @@ declare class WebTransport_ {
     stop(): Promise<void>;
 }
 export type { WebTransportOpts, WebTransportCtx, WebTransportBytes };
-export { WebTransport_, WebTransportStream };
+export { WebTransportServer, WebTransportStream };
 //# sourceMappingURL=index.d.ts.map

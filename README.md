@@ -1,6 +1,6 @@
 <img src="https://static.wikia.nocookie.net/arnelify/images/c/c8/Arnelify-logo-2024.png/revision/latest?cb=20240701012515" style="width:336px;" alt="Arnelify Logo" />
 
-![Arnelify Server for NodeJS](https://img.shields.io/badge/Arnelify%20Server%20for%20NodeJS-0.9.5-yellow) ![NodeJS](https://img.shields.io/badge/NodeJS-22.13.1-green) ![Bun](https://img.shields.io/badge/Bun-1.2.0-blue)
+![Arnelify Server for NodeJS](https://img.shields.io/badge/Arnelify%20Server%20for%20NodeJS-0.9.6-yellow) ![NodeJS](https://img.shields.io/badge/NodeJS-22.13.1-green) ![Bun](https://img.shields.io/badge/Bun-1.2.0-blue)
 
 ## 🚀 About
 
@@ -50,34 +50,48 @@ yarn add arnelify-server
 ### 📚 Examples
 
 ```typescript
-import { WebTransport_, WebTransportOpts, WebTransportBytes, WebTransportCtx, WebTransportStream } from "arnelify-server";
+import {
+  WebTransportServer,
+  WebTransportOpts,
+  WebTransportBytes,
+  WebTransportCtx,
+  WebTransportStream
+} from "arnelify-server";
 
-(function main() {
+(async function main() {
 
-  const ws_opts: WebTransportOpts = {
+  const wt_opts: WebTransportOpts = {
     block_size_kb: 64,
     cert_pem: "certs/cert.pem",
-    compression: true,
+    compression: false,
     handshake_timeout: 30,
     key_pem: "certs/key.pem",
     max_message_size_kb: 64,
-    ping_timeout: 30,
+    ping_timeout: 15,
     port: 4433,
     send_timeout: 30,
     thread_limit: 4
   };
 
-  const ws = new WebTransport_(ws_opts);
-
-  ws.on("connect", (ctx: WebTransportCtx, bytes: WebTransportBytes, stream: WebTransportStream): void => {
-    stream.push(ctx, bytes);
-    stream.close();
+  const wt: WebTransportServer = new WebTransportServer(wt_opts);
+  wt.logger(async (level: string, message: string): Promise<void> => {
+    console.log(`[Arnelify Server]: ${message}`);
   });
 
-  ws.start();
+  wt.on("connect", async (
+    ctx: WebTransportCtx,
+    bytes: WebTransportBytes,
+    stream: WebTransportStream
+  ): Promise<void> => {
+    await stream.push(ctx, bytes);
+    await stream.close();
+  });
+
+  await wt.start();
 
 })();
 ```
+
 ## 🎉 TCP2 / HTTP 3.0
 
 ### 📚 Configuration
@@ -103,40 +117,47 @@ import { WebTransport_, WebTransportOpts, WebTransportBytes, WebTransportCtx, We
 ### 📚 Examples
 
 ```typescript
-import { Http3, Http3Opts, Http3Ctx, Http3Stream } from "arnelify-server";
+import { 
+  Http3, 
+  Http3Opts, 
+  Http3Ctx, 
+  Http3Stream
+} from "arnelify-server";
 
-(function main() {
+(async function main() {
 
-const http3_opts: Http3Opts = {
-  allow_empty_files: true,
-  block_size_kb: 64,
-  cert_pem: "certs/cert.pem",
-  charset: "utf-8",
-  compression: true,
-  keep_alive: 30,
-  keep_extensions: true,
-  key_pem: "certs/key.pem",
-  max_fields: 10,
-  max_fields_size_total_mb: 1,
-  max_files: 3,
-  max_files_size_total_mb: 60,
-  max_file_size_mb: 60,
-  port: 4433,
-  storage_path: "/var/www/node/storage",
-  thread_limit: 4
-};
+  const http3_opts: Http3Opts = {
+    allow_empty_files: true,
+    block_size_kb: 64,
+    cert_pem: "certs/cert.pem",
+    charset: "utf-8",
+    compression: true,
+    keep_alive: 30,
+    keep_extensions: true,
+    key_pem: "certs/key.pem",
+    max_fields: 60,
+    max_fields_size_total_mb: 1,
+    max_files: 3,
+    max_files_size_total_mb: 60,
+    max_file_size_mb: 60,
+    port: 4433,
+    storage_path: "/var/www/node/storage",
+    thread_limit: 4
+  };
 
-const http3 = new Http3(http3_opts);
+  const http3: Http3 = new Http3(http3_opts);
+  http3.logger(async (_level: string, message: string): Promise<void> => {
+    console.log(`[Arnelify Server]: ${message}`);
+  });
 
-http3.on("/", (ctx: Http3Ctx, stream: Http3Stream): void => {
+  http3.on("/", async (ctx: Http3Ctx, stream: Http3Stream): Promise<void> => {
+    const bytes: Buffer = Buffer.from(JSON.stringify(ctx));
+    stream.set_code(200);
+    await stream.push_bytes(bytes, false);
+    await stream.end();
+  });
 
-  stream.set_code(200);
-  stream.push_json(ctx);
-  stream.end();
-
-});
-
-http3.start();
+  await http3.start();
 
 })();
 ```
@@ -159,29 +180,42 @@ http3.start();
 ### 📚 Examples
 
 ```typescript
-import { WebSocket_, WebSocketOpts, WebSocketBytes, WebSocketCtx, WebSocketStream } from "arnelify-server";
+import {
+  WebSocketServer,
+  WebSocketOpts,
+  WebSocketBytes,
+  WebSocketCtx,
+  WebSocketStream
+} from "arnelify-server";
 
-(function main() {
+(async function main() {
 
   const ws_opts: WebSocketOpts = {
     block_size_kb: 64,
-    compression: true,
+    compression: false,
     handshake_timeout: 30,
     max_message_size_kb: 64,
-    ping_timeout: 30,
+    ping_timeout: 15,
     port: 4433,
     send_timeout: 30,
     thread_limit: 4
   };
 
-  const ws = new WebSocket_(ws_opts);
-
-  ws.on("connect", (ctx: WebSocketCtx, bytes: WebSocketBytes, stream: WebSocketStream): void => {
-    stream.push(ctx, bytes);
-    stream.close();
+  const ws: WebSocketServer = new WebSocketServer(ws_opts);
+  ws.logger(async (_level: string, message: string): Promise<void> => {
+    console.log(`[Arnelify Server]: ${message}`);
   });
 
-  ws.start();
+  ws.on("connect", async (
+    ctx: WebSocketCtx,
+    bytes: WebSocketBytes,
+    stream: WebSocketStream
+  ): Promise<void> => {
+    await stream.push(ctx, bytes);
+    await stream.close();
+  });
+
+  await ws.start();
 
 })();
 ```
@@ -211,40 +245,47 @@ import { WebSocket_, WebSocketOpts, WebSocketBytes, WebSocketCtx, WebSocketStrea
 ### 📚 Examples
 
 ```typescript
-import { Http2, Http2Opts, Http2Ctx, Http2Stream } from "arnelify-server";
+import { 
+  Http2, 
+  Http2Opts, 
+  Http2Ctx, 
+  Http2Stream
+} from "arnelify-server";
 
-(function main() {
+(async function main() {
 
-const http2_opts: Http2Opts = {
-  allow_empty_files: true,
-  block_size_kb: 64,
-  cert_pem: "certs/cert.pem",
-  charset: "utf-8",
-  compression: true,
-  keep_alive: 30,
-  keep_extensions: true,
-  key_pem: "certs/key.pem",
-  max_fields: 10,
-  max_fields_size_total_mb: 1,
-  max_files: 3,
-  max_files_size_total_mb: 60,
-  max_file_size_mb: 60,
-  port: 4433,
-  storage_path: "/var/www/node/storage",
-  thread_limit: 4
-};
+  const http2_opts: Http2Opts = {
+    allow_empty_files: true,
+    block_size_kb: 64,
+    cert_pem: "certs/cert.pem",
+    charset: "utf-8",
+    compression: true,
+    keep_alive: 30,
+    keep_extensions: true,
+    key_pem: "certs/key.pem",
+    max_fields: 60,
+    max_fields_size_total_mb: 1,
+    max_files: 3,
+    max_files_size_total_mb: 60,
+    max_file_size_mb: 60,
+    port: 4433,
+    storage_path: "/var/www/node/storage",
+    thread_limit: 4
+  };
 
-const http2 = new Http2(http2_opts);
+  const http2: Http2 = new Http2(http2_opts);
+  http2.logger(async (_level: string, message: string): Promise<void> => {
+    console.log(`[Arnelify Server]: ${message}`);
+  });
 
-http2.on("/", (ctx: Http2Ctx, stream: Http2Stream): void => {
+  http2.on("/", async (ctx: Http2Ctx, stream: Http2Stream): Promise<void> => {
+    const bytes: Buffer = Buffer.from(JSON.stringify(ctx));
+    stream.set_code(200);
+    await stream.push_bytes(bytes, false);
+    await stream.end();
+  });
 
-  stream.set_code(200);
-  stream.push_json(ctx);
-  stream.end();
-
-});
-
-http2.start();
+  await http2.start();
 
 })();
 ```
@@ -272,38 +313,45 @@ http2.start();
 ### 📚 Examples
 
 ```typescript
-import { Http1, Http1Opts, Http1Ctx, Http1Stream } from "arnelify-server";
+import {
+  Http1,
+  Http1Opts,
+  Http1Ctx,
+  Http1Stream
+} from "arnelify-server";
 
-(function main() {
+(async function main() {
 
-const http1_opts: Http1Opts = {
-  allow_empty_files: true,
-  block_size_kb: 64,
-  charset: "utf-8",
-  compression: true,
-  keep_alive: 30,
-  keep_extensions: true,
-  max_fields: 10,
-  max_fields_size_total_mb: 1,
-  max_files: 3,
-  max_files_size_total_mb: 60,
-  max_file_size_mb: 60,
-  port: 4433,
-  storage_path: "/var/www/node/storage",
-  thread_limit: 4
-};
+  const http1_opts: Http1Opts = {
+    allow_empty_files: true,
+    block_size_kb: 64,
+    charset: "utf-8",
+    compression: true,
+    keep_alive: 30,
+    keep_extensions: true,
+    max_fields: 60,
+    max_fields_size_total_mb: 1,
+    max_files: 3,
+    max_files_size_total_mb: 60,
+    max_file_size_mb: 60,
+    port: 4433,
+    storage_path: "/var/www/node/storage",
+    thread_limit: 4
+  };
 
-const http1 = new Http1(http1_opts);
+  const http1: Http1 = new Http1(http1_opts);
+  http1.logger(async (_level: string, message: string): Promise<void> => {
+    console.log(`[Arnelify Server]: ${message}`);
+  });
 
-http1.on("/", (ctx: Http1Ctx, stream: Http1Stream): void => {
+  http1.on("/", async (ctx: Http1Ctx, stream: Http1Stream): Promise<void> => {
+    const bytes: Buffer = Buffer.from(JSON.stringify(ctx));
+    stream.set_code(200);
+    await stream.push_bytes(bytes, false);
+    await stream.end();
+  });
 
-  stream.set_code(200);
-  stream.push_json(ctx);
-  stream.end();
-
-});
-
-http1.start();
+  await http1.start();
 
 })();
 ```
@@ -342,7 +390,7 @@ yarn test_http1
 ```
 
 ## ⭐ Release Notes
-Version 0.9.5 — a multi-language server with HTTP 3.0 and WebTransport support.
+Version 0.9.6 — a multi-language server with HTTP 3.0 and WebTransport support.
 
 We are excited to introduce the Arnelify Server for NodeJS! Please note that this version is raw and still in active development.
 

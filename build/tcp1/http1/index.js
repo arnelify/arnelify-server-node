@@ -24,70 +24,44 @@ class Http1Stream {
     constructor(id) {
         this.id = 0;
         this.topic = "";
-        this.cb_send = (topic, args, bytes) => {
+        this.cb_send = async (_topic, _args, bytes) => {
             console.log(bytes);
         };
         this.id = id;
     }
     add_header(key, value) {
-        const args = [
-            this.id,
-            key,
-            value
-        ];
+        const args = [this.id, key, value];
         this.cb_send("http1_add_header", args, Buffer.alloc(0));
     }
-    end() {
-        const args = [
-            this.id
-        ];
-        this.cb_send("http1_end", args, Buffer.alloc(0));
+    async end() {
+        const args = [this.id];
+        await this.cb_send("http1_end", args, Buffer.alloc(0));
     }
     on_send(cb) {
         this.cb_send = cb;
     }
-    push_bytes(bytes, is_attachment = false) {
-        const args = [
-            this.id,
-            is_attachment ? 1 : 0
-        ];
-        this.cb_send("http1_push_bytes", args, bytes);
+    async push_bytes(bytes, is_attachment = false) {
+        const args = [this.id, is_attachment ? 1 : 0];
+        await this.cb_send("http1_push_bytes", args, bytes);
     }
-    push_file(file_path, is_attachment) {
-        const args = [
-            this.id,
-            file_path,
-            is_attachment ? 1 : 0
-        ];
-        this.cb_send("http1_push_file", args, Buffer.alloc(0));
+    async push_file(file_path, is_attachment) {
+        const args = [this.id, file_path, is_attachment ? 1 : 0];
+        await this.cb_send("http1_push_file", args, Buffer.alloc(0));
     }
-    push_json(json, is_attachment = false) {
-        const args = [
-            this.id,
-            json,
-            is_attachment ? 1 : 0
-        ];
-        this.cb_send("http1_push_json", args, Buffer.alloc(0));
+    async push_json(json, is_attachment = false) {
+        const args = [this.id, json, is_attachment ? 1 : 0];
+        await this.cb_send("http1_push_json", args, Buffer.alloc(0));
     }
     set_code(code) {
-        const args = [
-            this.id,
-            code
-        ];
+        const args = [this.id, code];
         this.cb_send("http1_set_code", args, Buffer.alloc(0));
     }
     set_compression(compression) {
-        const args = [
-            this.id,
-            compression ? compression : ""
-        ];
+        const args = [this.id, compression ? compression : ""];
         this.cb_send("http1_set_compression", args, Buffer.alloc(0));
     }
     set_headers(headers) {
-        const args = [
-            this.id,
-            headers
-        ];
+        const args = [this.id, headers];
         this.cb_send("http1_set_headers", args, Buffer.alloc(0));
     }
 }
@@ -100,7 +74,6 @@ class Http1 {
         this.opts = opts;
         const uds_opts = {
             block_size_kb: opts.block_size_kb,
-            keep_alive: opts.keep_alive,
             socket_path: this.socket_path,
             thread_limit: opts.thread_limit
         };
@@ -111,27 +84,30 @@ class Http1 {
         }));
     }
     logger(cb) {
-        this.uds.on('http1_logger', (ctx, _bytes) => {
+        this.uds.on('http1_logger', async (ctx, _bytes) => {
             const [level, message] = ctx;
-            cb(level, message);
+            await cb(level, message);
         });
+        native.http1_logger(this.id);
     }
     on(path, cb) {
         this.handlers[path] = cb;
-        this.uds.on('http1_on', (ctx, _bytes) => {
+        this.uds.on('http1_on', async (ctx, _bytes) => {
             const [stream_id, handler_path, handler_ctx] = ctx;
             const stream = new Http1Stream(stream_id);
-            stream.on_send((topic, args, buffer) => {
-                this.uds.push(topic, args, buffer);
+            stream.on_send(async (topic, args, buffer) => {
+                await this.uds.push(topic, args, buffer);
             });
-            const cb = this.handlers[handler_path];
-            cb(handler_ctx, stream);
+            const handler = this.handlers[handler_path];
+            if (handler)
+                await handler(handler_ctx, stream);
         });
         native.http1_on(this.id, path);
     }
     async start() {
+        native.http1_start_ipc(this.id);
+        await this.uds.start();
         native.http1_start(this.id);
-        this.uds.start();
     }
     async stop() {
         native.http1_stop(this.id);

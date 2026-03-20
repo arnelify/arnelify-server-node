@@ -139,7 +139,7 @@ class UnixDomainSocketReq {
 class UnixDomainSocketStream {
     constructor(opts) {
         this.topic = null;
-        this.cb_send = (bytes) => {
+        this.cb_send = async (bytes) => {
             console.log(bytes);
         };
         this.opts = opts;
@@ -147,7 +147,7 @@ class UnixDomainSocketStream {
     on_send(cb) {
         this.cb_send = cb;
     }
-    push(payload, bytes) {
+    async push(payload, bytes) {
         const json = Buffer.from(JSON.stringify({
             topic: this.topic,
             payload
@@ -164,10 +164,10 @@ class UnixDomainSocketStream {
 exports.UnixDomainSocketStream = UnixDomainSocketStream;
 class UnixDomainSocket {
     constructor(opts) {
-        this.cb_logger = (_level, message) => {
+        this.cb_handlers = {};
+        this.cb_logger = async (_level, message) => {
             console.log(message);
         };
-        this.cb_handlers = {};
         this.opts = opts;
     }
     logger(cb) {
@@ -176,9 +176,9 @@ class UnixDomainSocket {
     on(topic, cb) {
         this.cb_handlers[topic] = cb;
     }
-    push(topic, payload, bytes) {
+    async push(topic, payload, bytes) {
         if (!this.client) {
-            this.cb_logger("error", `No client connected for push: ${topic}`);
+            await this.cb_logger("error", `No client connected for push: ${topic}`);
             return;
         }
         const json = JSON.stringify({ topic, payload });
@@ -187,16 +187,16 @@ class UnixDomainSocket {
         const bytes_length = bytes.length;
         const meta = Buffer.from(`${json_length}+${bytes_length}:`, "utf-8");
         const buff = Buffer.concat([meta, json_bytes, bytes]);
-        this.client.write(buff);
+        await this.client.write(buff);
     }
     async start() {
         const req = new UnixDomainSocketReq(this.opts);
         const stream = new UnixDomainSocketStream(this.opts);
-        stream.on_send((bytes) => {
-            this.client.write(bytes);
+        stream.on_send(async (bytes) => {
+            await this.client.write(bytes);
         });
         this.client = net_1.default.createConnection(this.opts.socket_path);
-        this.client.on('data', (bytes) => {
+        this.client.on('data', async (bytes) => {
             req.add(bytes);
             while (true) {
                 const res = req.read_block();
@@ -208,26 +208,27 @@ class UnixDomainSocket {
                     req.reset();
                     if (this.cb_handlers.hasOwnProperty(topic)) {
                         const handler = this.cb_handlers[topic];
-                        handler(json, bytes);
+                        if (handler)
+                            await handler(json, bytes);
                     }
                 }
                 else if (typeof res === 'string') {
-                    this.cb_logger("error", res);
+                    await this.cb_logger("error", res);
                     process.exit(1);
                 }
                 if (req.is_empty())
                     break;
             }
         });
-        this.client.on('error', (e) => {
-            this.cb_logger('error', `Connection error: ${e.message}`);
+        this.client.on('error', async (e) => {
+            await this.cb_logger('error', `Connection error: ${e.message}`);
         });
-        this.client.on('close', () => {
-            this.cb_logger('error', 'Connection closed');
+        this.client.on('close', async () => {
+            await this.cb_logger('error', 'Connection closed');
         });
     }
-    stop() {
-        this.client.end();
+    async stop() {
+        await this.client.end();
     }
 }
 exports.UnixDomainSocket = UnixDomainSocket;

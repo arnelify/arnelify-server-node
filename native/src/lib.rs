@@ -66,19 +66,19 @@ static HTTP1_STREAM_ID: AtomicU64 = AtomicU64::new(1);
 static HTTP1_STREAMS: OnceLock<Mutex<Http1Streams>> = OnceLock::new();
 static HTTP1_UDS_MAP: OnceLock<Mutex<HashMap<u64, Arc<UnixDomainSocket>>>> = OnceLock::new();
 
-type WebSocketStreams = HashMap<u64, (Arc<Mutex<WebSocketStream>>, mpsc::Sender<u8>)>;
-static WS_MAP: OnceLock<Mutex<HashMap<u64, Arc<WebSocket>>>> = OnceLock::new();
-static WS_ID: OnceLock<Mutex<u64>> = OnceLock::new();
-static WS_STREAM_ID: AtomicU64 = AtomicU64::new(1);
-static WS_STREAMS: OnceLock<Mutex<WebSocketStreams>> = OnceLock::new();
-static WS_UDS_MAP: OnceLock<Mutex<HashMap<u64, Arc<UnixDomainSocket>>>> = OnceLock::new();
-
 type Http2Streams = HashMap<u64, (Arc<Mutex<Http2Stream>>, mpsc::Sender<u8>)>;
 static HTTP2_MAP: OnceLock<Mutex<HashMap<u64, Arc<Http2>>>> = OnceLock::new();
 static HTTP2_ID: OnceLock<Mutex<u64>> = OnceLock::new();
 static HTTP2_STREAM_ID: AtomicU64 = AtomicU64::new(1);
 static HTTP2_STREAMS: OnceLock<Mutex<Http2Streams>> = OnceLock::new();
 static HTTP2_UDS_MAP: OnceLock<Mutex<HashMap<u64, Arc<UnixDomainSocket>>>> = OnceLock::new();
+
+type WebSocketStreams = HashMap<u64, (Arc<Mutex<WebSocketStream>>, mpsc::Sender<u8>)>;
+static WS_MAP: OnceLock<Mutex<HashMap<u64, Arc<WebSocket>>>> = OnceLock::new();
+static WS_ID: OnceLock<Mutex<u64>> = OnceLock::new();
+static WS_STREAM_ID: AtomicU64 = AtomicU64::new(1);
+static WS_STREAMS: OnceLock<Mutex<WebSocketStreams>> = OnceLock::new();
+static WS_UDS_MAP: OnceLock<Mutex<HashMap<u64, Arc<UnixDomainSocket>>>> = OnceLock::new();
 
 type Http3Streams = HashMap<u64, (Arc<Mutex<Http3Stream>>, mpsc::Sender<u8>)>;
 static HTTP3_MAP: OnceLock<Mutex<HashMap<u64, Arc<Http3>>>> = OnceLock::new();
@@ -170,7 +170,6 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
   let uds_opts: UnixDomainSocketOpts = UnixDomainSocketOpts {
     block_size_kb: get_usize(&opts, "block_size_kb"),
-    keep_alive: get_u8(&opts, "keep_alive"),
     socket_path: get_str(&opts, "socket_path"),
     thread_limit: get_u64(&opts, "thread_limit"),
   };
@@ -186,8 +185,12 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let value: String = v[2].as_str().unwrap_or("").to_string();
 
           if let Some(map) = HTTP1_STREAMS.get() {
-            let streams: MutexGuard<'_, Http1Streams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<Http1Stream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, Http1Streams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, Http1Stream> = stream_arc.lock().unwrap();
                 stream_lock.add_header(&key, &value);
@@ -220,8 +223,12 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
         Some(v) => {
           let stream_id: u64 = v[0].as_u64().unwrap_or(0);
           if let Some(map) = HTTP1_STREAMS.get() {
-            let streams: MutexGuard<'_, Http1Streams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<Http1Stream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, Http1Streams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, tx)) => {
                 let mut stream_lock: MutexGuard<'_, Http1Stream> = stream_arc.lock().unwrap();
                 stream_lock.end();
@@ -253,14 +260,15 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
         Some(v) => {
           let stream_id: u64 = v[0].as_u64().unwrap_or(0);
           let is_attachment: bool = v[1].as_u64().unwrap_or(0) != 0;
-          let bytes: Vec<u8> = {
-            let bytes_guard: MutexGuard<'_, Vec<u8>> = bytes.lock().unwrap();
-            bytes_guard.clone()
-          };
+          let bytes: Vec<u8> = bytes.lock().unwrap().clone();
 
           if let Some(map) = HTTP1_STREAMS.get() {
-            let streams: MutexGuard<'_, Http1Streams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<Http1Stream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, Http1Streams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, Http1Stream> = stream_arc.lock().unwrap();
                 stream_lock.push_bytes(&bytes, is_attachment);
@@ -296,8 +304,12 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let is_attachment: bool = v[2].as_u64().unwrap_or(0) != 0;
 
           if let Some(map) = HTTP1_STREAMS.get() {
-            let streams: MutexGuard<'_, Http1Streams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<Http1Stream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, Http1Streams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, Http1Stream> = stream_arc.lock().unwrap();
                 stream_lock.push_file(&file_path, is_attachment);
@@ -333,8 +345,12 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let is_attachment: bool = v[2].as_u64().unwrap_or(0) != 0;
 
           if let Some(map) = HTTP1_STREAMS.get() {
-            let streams: MutexGuard<'_, Http1Streams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<Http1Stream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, Http1Streams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, Http1Stream> = stream_arc.lock().unwrap();
                 stream_lock.push_json(&json, is_attachment);
@@ -369,8 +385,12 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let code: u64 = v[1].as_u64().unwrap_or(0);
 
           if let Some(map) = HTTP1_STREAMS.get() {
-            let streams: MutexGuard<'_, Http1Streams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<Http1Stream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, Http1Streams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, Http1Stream> = stream_arc.lock().unwrap();
                 stream_lock.set_code(code as u16);
@@ -405,8 +425,12 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let compression: &str = v[1].as_str().unwrap_or("");
 
           if let Some(map) = HTTP1_STREAMS.get() {
-            let streams: MutexGuard<'_, Http1Streams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<Http1Stream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, Http1Streams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, Http1Stream> = stream_arc.lock().unwrap();
                 if compression.len() > 0 {
@@ -458,8 +482,12 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           }
 
           if let Some(map) = HTTP1_STREAMS.get() {
-            let streams: MutexGuard<'_, Http1Streams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<Http1Stream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, Http1Streams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, Http1Stream> = stream_arc.lock().unwrap();
                 stream_lock.set_headers(headers);
@@ -574,7 +602,7 @@ fn http1_on(mut cx: FunctionContext) -> JsResult<JsUndefined> {
   let path: String = cx.argument::<JsString>(1)?.value(&mut cx);
   let id: u64 = js_id as u64;
 
-  let path_handler: String = path.clone();
+  let path_safe: String = path.clone();
   let http1_handler: Arc<Http1Handler> = Arc::new(
     move |ctx: Arc<Mutex<Http1Ctx>>, stream: Arc<Mutex<Http1Stream>>| -> () {
       let (tx, rx) = mpsc::channel::<u8>();
@@ -591,19 +619,17 @@ fn http1_on(mut cx: FunctionContext) -> JsResult<JsUndefined> {
         ctx_lock.clone()
       };
 
-      let args: JSON = serde_json::json!([stream_id, path_handler, ctx]);
+      let args: JSON = serde_json::json!([stream_id, path_safe, ctx]);
       let bytes: UnixDomainSocketBytes = Vec::new();
 
-      let mut keep_alive: u64 = 0;
       if let Some(map) = HTTP1_UDS_MAP.get() {
         if let Some(uds) = map.lock().unwrap().get(&id) {
-          keep_alive = uds.get_keep_alive() as u64;
           uds.push("http1_on", &args, bytes, true);
         }
       }
 
       loop {
-        match rx.recv_timeout(Duration::from_secs(keep_alive)) {
+        match rx.recv_timeout(Duration::from_secs(90)) {
           Ok(val) => {
             if val == 1 {
               break;
@@ -650,7 +676,7 @@ fn http1_on(mut cx: FunctionContext) -> JsResult<JsUndefined> {
   Ok(cx.undefined())
 }
 
-fn http1_start(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+fn http1_start_ipc(mut cx: FunctionContext) -> JsResult<JsUndefined> {
   let js_id: f64 = cx.argument::<JsNumber>(0)?.value(&mut cx);
   let id: u64 = js_id as u64;
 
@@ -667,20 +693,27 @@ fn http1_start(mut cx: FunctionContext) -> JsResult<JsUndefined> {
     }
   }
 
+  loop {
+    match rx.recv() {
+      Ok(1) => break,
+      Ok(_) => continue,
+      Err(_) => break,
+    }
+  }
+
+  Ok(cx.undefined())
+}
+
+fn http1_start(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+  let js_id: f64 = cx.argument::<JsNumber>(0)?.value(&mut cx);
+  let id: u64 = js_id as u64;
+
   if let Some(map) = HTTP1_MAP.get() {
     if let Some(http1) = map.lock().unwrap().get(&id) {
       let http1_safe: Arc<Http1> = Arc::clone(http1);
       thread::spawn(move || {
         http1_safe.start();
       });
-    }
-  }
-
-  loop {
-    match rx.recv() {
-      Ok(1) => break,
-      Ok(_) => continue,
-      Err(_) => break,
     }
   }
 
@@ -706,424 +739,6 @@ fn http1_stop(mut cx: FunctionContext) -> JsResult<JsUndefined> {
   Ok(cx.undefined())
 }
 
-fn ws_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
-  let js_opts = cx.argument::<JsString>(0)?.value(&mut cx);
-  let opts: JSON = match serde_json::from_str(&js_opts) {
-    Ok(json) => json,
-    Err(_) => {
-      println!("[Arnelify Server]: NEON error in ws_create: Invalid JSON in 'c_opts'.");
-      return Ok(cx.number(0.0));
-    }
-  };
-
-  let id: &Mutex<u64> = WS_ID.get_or_init(|| Mutex::new(0));
-  let new_id: u64 = {
-    let mut js: MutexGuard<'_, u64> = id.lock().unwrap();
-    *js += 1;
-    *js
-  };
-
-  let uds_opts: UnixDomainSocketOpts = UnixDomainSocketOpts {
-    block_size_kb: get_usize(&opts, "block_size_kb"),
-    keep_alive: get_u8(&opts, "keep_alive"),
-    socket_path: get_str(&opts, "socket_path"),
-    thread_limit: get_u64(&opts, "thread_limit"),
-  };
-
-  let uds_ws_close: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
-      let args: JSON = ctx.lock().unwrap().clone();
-
-      match args.as_array() {
-        Some(v) => {
-          let stream_id: u64 = v[0].as_u64().unwrap_or(0);
-          if let Some(map) = WS_STREAMS.get() {
-            let streams: MutexGuard<'_, WebSocketStreams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
-              Some((stream_arc, tx)) => {
-                let mut stream_lock: MutexGuard<'_, WebSocketStream> = stream_arc.lock().unwrap();
-                stream_lock.close();
-                let _ = tx.send(1);
-              }
-              None => {
-                let args: JSON =
-                  serde_json::json!(["error", "NEON error in uds_ws_close: No stream found."]);
-
-                if let Some(map) = WS_UDS_MAP.get() {
-                  if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("ws_logger", &args, Vec::new(), true);
-                  }
-                }
-              }
-            }
-          }
-        }
-        None => {}
-      }
-    },
-  );
-
-  let uds_ws_push: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
-      let args: JSON = ctx.lock().unwrap().clone();
-
-      match args.as_array() {
-        Some(v) => {
-          let stream_id: u64 = v[0].as_u64().unwrap_or(0);
-          let json: JSON = v[1].clone();
-          let bytes: Vec<u8> = {
-            let bytes_guard: MutexGuard<'_, Vec<u8>> = bytes.lock().unwrap();
-            bytes_guard.clone()
-          };
-
-          if let Some(map) = WS_STREAMS.get() {
-            let streams: MutexGuard<'_, WebSocketStreams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, WebSocketStream> = stream_arc.lock().unwrap();
-                stream_lock.push(&json, &bytes);
-              }
-              None => {
-                let args: JSON =
-                  serde_json::json!(["error", "NEON error in uds_ws_push: No stream found."]);
-
-                if let Some(map) = WS_UDS_MAP.get() {
-                  if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("ws_logger", &args, Vec::new(), true);
-                  }
-                }
-              }
-            }
-          }
-        }
-        None => {}
-      }
-    },
-  );
-
-  let uds_ws_push_bytes: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
-      let args: JSON = ctx.lock().unwrap().clone();
-
-      match args.as_array() {
-        Some(v) => {
-          let stream_id: u64 = v[0].as_u64().unwrap_or(0);
-          let bytes: Vec<u8> = {
-            let bytes_guard: MutexGuard<'_, Vec<u8>> = bytes.lock().unwrap();
-            bytes_guard.clone()
-          };
-
-          if let Some(map) = WS_STREAMS.get() {
-            let streams: MutexGuard<'_, WebSocketStreams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, WebSocketStream> = stream_arc.lock().unwrap();
-                stream_lock.push_bytes(&bytes);
-              }
-              None => {
-                let args: JSON =
-                  serde_json::json!(["error", "NEON error in uds_ws_push_bytes: No stream found."]);
-
-                if let Some(map) = WS_UDS_MAP.get() {
-                  if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("ws_logger", &args, Vec::new(), true);
-                  }
-                }
-              }
-            }
-          }
-        }
-        None => {}
-      }
-    },
-  );
-
-  let uds_ws_push_json: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
-      let args: JSON = ctx.lock().unwrap().clone();
-
-      match args.as_array() {
-        Some(v) => {
-          let stream_id: u64 = v[0].as_u64().unwrap_or(0);
-          let json: JSON = v[1].clone();
-
-          if let Some(map) = WS_STREAMS.get() {
-            let streams: MutexGuard<'_, WebSocketStreams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, WebSocketStream> = stream_arc.lock().unwrap();
-                stream_lock.push_json(&json);
-              }
-              None => {
-                let args: JSON =
-                  serde_json::json!(["error", "NEON error in uds_ws_push_json: No stream found."]);
-
-                if let Some(map) = WS_UDS_MAP.get() {
-                  if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("ws_logger", &args, Vec::new(), true);
-                  }
-                }
-              }
-            }
-          }
-        }
-        None => {}
-      }
-    },
-  );
-
-  let uds_ws_set_compression: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
-      let args: JSON = ctx.lock().unwrap().clone();
-
-      match args.as_array() {
-        Some(v) => {
-          let stream_id: u64 = v[0].as_u64().unwrap_or(0);
-          let compression: &str = v[1].as_str().unwrap_or("");
-
-          if let Some(map) = WS_STREAMS.get() {
-            let streams: MutexGuard<'_, WebSocketStreams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, WebSocketStream> = stream_arc.lock().unwrap();
-                if compression.len() > 0 {
-                  stream_lock.set_compression(Some(String::from(compression)));
-                  return;
-                }
-
-                stream_lock.set_compression(None);
-              }
-              None => {
-                let args: JSON = serde_json::json!([
-                  "error",
-                  "NEON error in uds_ws_set_compression: No stream found."
-                ]);
-
-                if let Some(map) = WS_UDS_MAP.get() {
-                  if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("ws_logger", &args, Vec::new(), true);
-                  }
-                }
-              }
-            }
-          }
-        }
-        None => {}
-      }
-    },
-  );
-
-  let mut uds: UnixDomainSocket = UnixDomainSocket::new(uds_opts);
-  uds.on("ws_close", uds_ws_close);
-  uds.on("ws_push", uds_ws_push);
-  uds.on("ws_push_bytes", uds_ws_push_bytes);
-  uds.on("ws_push_json", uds_ws_push_json);
-  uds.on("ws_set_compression", uds_ws_set_compression);
-
-  let uds_map: &Mutex<HashMap<u64, Arc<UnixDomainSocket>>> =
-    WS_UDS_MAP.get_or_init(|| Mutex::new(HashMap::new()));
-  {
-    uds_map.lock().unwrap().insert(new_id as u64, Arc::new(uds));
-  }
-
-  let ws_opts: WebSocketOpts = WebSocketOpts {
-    block_size_kb: get_usize(&opts, "block_size_kb"),
-    compression: get_bool(&opts, "compression"),
-    handshake_timeout: get_u64(&opts, "handshake_timeout"),
-    max_message_size_kb: get_u64(&opts, "max_message_size_kb"),
-    ping_timeout: get_u64(&opts, "ping_timeout"),
-    port: get_u16(&opts, "port"),
-    send_timeout: get_u64(&opts, "send_timeout"),
-    thread_limit: get_u64(&opts, "thread_limit"),
-  };
-
-  let ws: WebSocket = WebSocket::new(ws_opts);
-  let ws_map: &Mutex<HashMap<u64, Arc<WebSocket>>> =
-    WS_MAP.get_or_init(|| Mutex::new(HashMap::new()));
-  {
-    ws_map.lock().unwrap().insert(new_id as u64, Arc::new(ws));
-  }
-
-  Ok(cx.number(new_id as f64))
-}
-
-fn ws_destroy(mut cx: FunctionContext) -> JsResult<JsUndefined> {
-  let js_id: f64 = cx.argument::<JsNumber>(0)?.value(&mut cx);
-  let id: u64 = js_id as u64;
-
-  if let Some(map) = WS_MAP.get() {
-    map.lock().unwrap().remove(&id);
-  }
-
-  if let Some(map) = WS_UDS_MAP.get() {
-    map.lock().unwrap().remove(&id);
-  }
-
-  Ok(cx.undefined())
-}
-
-fn ws_logger(mut cx: FunctionContext) -> JsResult<JsUndefined> {
-  let js_id: f64 = cx.argument::<JsNumber>(0)?.value(&mut cx);
-  let id: u64 = js_id as u64;
-
-  let ws_logger: Arc<WebSocketLogger> = Arc::new(move |level: &str, message: &str| -> () {
-    let args: JSON = serde_json::json!([level, message]);
-    let bytes: UnixDomainSocketBytes = Vec::new();
-
-    if let Some(map) = WS_UDS_MAP.get() {
-      if let Some(uds) = map.lock().unwrap().get(&id) {
-        uds.push("ws_logger", &args, bytes, true);
-      }
-    }
-  });
-
-  if let Some(map) = WS_MAP.get() {
-    if let Some(ws) = map.lock().unwrap().get(&id) {
-      ws.logger(ws_logger);
-    }
-  }
-
-  Ok(cx.undefined())
-}
-
-fn ws_on(mut cx: FunctionContext) -> JsResult<JsUndefined> {
-  let js_id: f64 = cx.argument::<JsNumber>(0)?.value(&mut cx);
-  let topic: String = cx.argument::<JsString>(1)?.value(&mut cx);
-  let id: u64 = js_id as u64;
-
-  let topic_handler: String = topic.clone();
-  let ws_handler: Arc<WebSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<WebSocketCtx>>,
-          bytes: Arc<Mutex<WebSocketBytes>>,
-          stream: Arc<Mutex<WebSocketStream>>|
-          -> () {
-      let (tx, rx) = mpsc::channel::<u8>();
-      let stream_id: u64 = WS_STREAM_ID.fetch_add(1, Ordering::Relaxed);
-
-      WS_STREAMS
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .unwrap()
-        .insert(stream_id, (stream, tx));
-
-      let ctx: WebSocketCtx = {
-        let ctx_lock: std::sync::MutexGuard<'_, WebSocketCtx> = ctx.lock().unwrap();
-        ctx_lock.clone()
-      };
-
-      let args: JSON = serde_json::json!([stream_id, topic_handler, ctx]);
-      let bytes: UnixDomainSocketBytes = bytes.lock().unwrap().clone();
-
-      let mut keep_alive: u64 = 0;
-      if let Some(map) = WS_UDS_MAP.get() {
-        if let Some(uds) = map.lock().unwrap().get(&id) {
-          keep_alive = uds.get_keep_alive() as u64;
-          uds.push("ws_on", &args, bytes, true);
-        }
-      }
-
-      loop {
-        match rx.recv_timeout(Duration::from_secs(keep_alive)) {
-          Ok(val) => {
-            if val == 1 {
-              break;
-            }
-          }
-          Err(RecvTimeoutError::Timeout) => {
-            let args: JSON =
-              serde_json::json!(["error", "NEON error in ws_on: Stream response timeout."]);
-            if let Some(map) = WS_UDS_MAP.get() {
-              if let Some(uds) = map.lock().unwrap().get(&id) {
-                uds.push("ws_logger", &args, Vec::new(), true);
-              }
-            }
-            break;
-          }
-          Err(RecvTimeoutError::Disconnected) => {
-            let args: JSON =
-              serde_json::json!(["error", "NEON error in ws_on: Stream channel disconnected."]);
-            if let Some(map) = WS_UDS_MAP.get() {
-              if let Some(uds) = map.lock().unwrap().get(&id) {
-                uds.push("ws_logger", &args, Vec::new(), true);
-              }
-            }
-
-            break;
-          }
-        }
-      }
-
-      if let Some(map) = WS_STREAMS.get() {
-        map.lock().unwrap().remove(&stream_id);
-      }
-    },
-  );
-
-  if let Some(map) = WS_MAP.get() {
-    if let Some(ws) = map.lock().unwrap().get(&id) {
-      ws.on(&topic, ws_handler);
-    }
-  }
-
-  Ok(cx.undefined())
-}
-
-fn ws_start(mut cx: FunctionContext) -> JsResult<JsUndefined> {
-  let js_id: f64 = cx.argument::<JsNumber>(0)?.value(&mut cx);
-  let id: u64 = js_id as u64;
-
-  let (tx, rx) = mpsc::channel::<u8>();
-
-  if let Some(map) = WS_UDS_MAP.get() {
-    if let Some(uds) = map.lock().unwrap().get(&id) {
-      let uds_safe: Arc<UnixDomainSocket> = Arc::clone(uds);
-      thread::spawn(move || {
-        uds_safe.start(Arc::new(move || {
-          let _ = tx.send(1);
-        }));
-      });
-    }
-  }
-
-  if let Some(map) = WS_MAP.get() {
-    if let Some(ws) = map.lock().unwrap().get(&id) {
-      let ws_safe: Arc<WebSocket> = Arc::clone(ws);
-      thread::spawn(move || {
-        ws_safe.start();
-      });
-    }
-  }
-
-  loop {
-    match rx.recv() {
-      Ok(1) => break,
-      Ok(_) => continue,
-      Err(_) => break,
-    }
-  }
-
-  Ok(cx.undefined())
-}
-
-fn ws_stop(mut cx: FunctionContext) -> JsResult<JsUndefined> {
-  let js_id: f64 = cx.argument::<JsNumber>(0)?.value(&mut cx);
-  let id: u64 = js_id as u64;
-
-  if let Some(map) = WS_UDS_MAP.get() {
-    if let Some(uds) = map.lock().unwrap().get(&id) {
-      uds.stop();
-    }
-  }
-
-  if let Some(map) = WS_MAP.get() {
-    if let Some(ws) = map.lock().unwrap().get(&id) {
-      ws.stop();
-    }
-  }
-
-  Ok(cx.undefined())
-}
-
 fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   let js_opts = cx.argument::<JsString>(0)?.value(&mut cx);
   let opts: JSON = match serde_json::from_str(&js_opts) {
@@ -1143,7 +758,6 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
   let uds_opts: UnixDomainSocketOpts = UnixDomainSocketOpts {
     block_size_kb: get_usize(&opts, "block_size_kb"),
-    keep_alive: get_u8(&opts, "keep_alive"),
     socket_path: get_str(&opts, "socket_path"),
     thread_limit: get_u64(&opts, "thread_limit"),
   };
@@ -1159,8 +773,12 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let value: String = v[2].as_str().unwrap_or("").to_string();
 
           if let Some(map) = HTTP2_STREAMS.get() {
-            let streams: MutexGuard<'_, Http2Streams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<Http2Stream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, Http2Streams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, Http2Stream> = stream_arc.lock().unwrap();
                 stream_lock.add_header(&key, &value);
@@ -1193,8 +811,12 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
         Some(v) => {
           let stream_id: u64 = v[0].as_u64().unwrap_or(0);
           if let Some(map) = HTTP2_STREAMS.get() {
-            let streams: MutexGuard<'_, Http2Streams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<Http2Stream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, Http2Streams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, tx)) => {
                 let mut stream_lock: MutexGuard<'_, Http2Stream> = stream_arc.lock().unwrap();
                 stream_lock.end();
@@ -1226,14 +848,15 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
         Some(v) => {
           let stream_id: u64 = v[0].as_u64().unwrap_or(0);
           let is_attachment: bool = v[1].as_u64().unwrap_or(0) != 0;
-          let bytes: Vec<u8> = {
-            let bytes_guard: MutexGuard<'_, Vec<u8>> = bytes.lock().unwrap();
-            bytes_guard.clone()
-          };
+          let bytes: Vec<u8> = bytes.lock().unwrap().clone();
 
           if let Some(map) = HTTP2_STREAMS.get() {
-            let streams: MutexGuard<'_, Http2Streams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<Http2Stream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, Http2Streams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, Http2Stream> = stream_arc.lock().unwrap();
                 stream_lock.push_bytes(&bytes, is_attachment);
@@ -1269,8 +892,12 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let is_attachment: bool = v[2].as_u64().unwrap_or(0) != 0;
 
           if let Some(map) = HTTP2_STREAMS.get() {
-            let streams: MutexGuard<'_, Http2Streams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<Http2Stream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, Http2Streams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, Http2Stream> = stream_arc.lock().unwrap();
                 stream_lock.push_file(&file_path, is_attachment);
@@ -1306,8 +933,12 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let is_attachment: bool = v[2].as_u64().unwrap_or(0) != 0;
 
           if let Some(map) = HTTP2_STREAMS.get() {
-            let streams: MutexGuard<'_, Http2Streams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<Http2Stream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, Http2Streams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, Http2Stream> = stream_arc.lock().unwrap();
                 stream_lock.push_json(&json, is_attachment);
@@ -1342,8 +973,12 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let code: u64 = v[1].as_u64().unwrap_or(0);
 
           if let Some(map) = HTTP2_STREAMS.get() {
-            let streams: MutexGuard<'_, Http2Streams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<Http2Stream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, Http2Streams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, Http2Stream> = stream_arc.lock().unwrap();
                 stream_lock.set_code(code as u16);
@@ -1378,8 +1013,12 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let compression: &str = v[1].as_str().unwrap_or("");
 
           if let Some(map) = HTTP2_STREAMS.get() {
-            let streams: MutexGuard<'_, Http2Streams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<Http2Stream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, Http2Streams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, Http2Stream> = stream_arc.lock().unwrap();
                 if compression.len() > 0 {
@@ -1417,6 +1056,7 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
         Some(v) => {
           let mut headers: Vec<(String, String)> = Vec::new();
           let stream_id: u64 = v[0].as_u64().unwrap_or(0);
+
           if let Some(JSON::Object(map)) = v.get(1) {
             for (key, value) in map {
               let value = match value {
@@ -1431,8 +1071,12 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           }
 
           if let Some(map) = HTTP2_STREAMS.get() {
-            let streams: MutexGuard<'_, Http2Streams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<Http2Stream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, Http2Streams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, Http2Stream> = stream_arc.lock().unwrap();
                 stream_lock.set_headers(headers);
@@ -1549,7 +1193,7 @@ fn http2_on(mut cx: FunctionContext) -> JsResult<JsUndefined> {
   let path: String = cx.argument::<JsString>(1)?.value(&mut cx);
   let id: u64 = js_id as u64;
 
-  let path_handler: String = path.clone();
+  let path_safe: String = path.clone();
   let http2_handler: Arc<Http2Handler> = Arc::new(
     move |ctx: Arc<Mutex<Http2Ctx>>, stream: Arc<Mutex<Http2Stream>>| -> () {
       let (tx, rx) = mpsc::channel::<u8>();
@@ -1561,24 +1205,18 @@ fn http2_on(mut cx: FunctionContext) -> JsResult<JsUndefined> {
         .unwrap()
         .insert(stream_id, (stream, tx));
 
-      let ctx: Http2Ctx = {
-        let ctx_lock: std::sync::MutexGuard<'_, Http2Ctx> = ctx.lock().unwrap();
-        ctx_lock.clone()
-      };
-
-      let args: JSON = serde_json::json!([stream_id, path_handler, ctx]);
+      let ctx: Http2Ctx = ctx.lock().unwrap().clone();
+      let args: JSON = serde_json::json!([stream_id, path_safe, ctx]);
       let bytes: UnixDomainSocketBytes = Vec::new();
 
-      let mut keep_alive: u64 = 0;
       if let Some(map) = HTTP2_UDS_MAP.get() {
         if let Some(uds) = map.lock().unwrap().get(&id) {
-          keep_alive = uds.get_keep_alive() as u64;
           uds.push("http2_on", &args, bytes, true);
         }
       }
 
       loop {
-        match rx.recv_timeout(Duration::from_secs(keep_alive)) {
+        match rx.recv_timeout(Duration::from_secs(90)) {
           Ok(val) => {
             if val == 1 {
               break;
@@ -1625,7 +1263,7 @@ fn http2_on(mut cx: FunctionContext) -> JsResult<JsUndefined> {
   Ok(cx.undefined())
 }
 
-fn http2_start(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+fn http2_start_ipc(mut cx: FunctionContext) -> JsResult<JsUndefined> {
   let js_id: f64 = cx.argument::<JsNumber>(0)?.value(&mut cx);
   let id: u64 = js_id as u64;
 
@@ -1642,20 +1280,27 @@ fn http2_start(mut cx: FunctionContext) -> JsResult<JsUndefined> {
     }
   }
 
+  loop {
+    match rx.recv() {
+      Ok(1) => break,
+      Ok(_) => continue,
+      Err(_) => break,
+    }
+  }
+
+  Ok(cx.undefined())
+}
+
+fn http2_start(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+  let js_id: f64 = cx.argument::<JsNumber>(0)?.value(&mut cx);
+  let id: u64 = js_id as u64;
+
   if let Some(map) = HTTP2_MAP.get() {
     if let Some(http2) = map.lock().unwrap().get(&id) {
       let http2_safe: Arc<Http2> = Arc::clone(http2);
       thread::spawn(move || {
         http2_safe.start();
       });
-    }
-  }
-
-  loop {
-    match rx.recv() {
-      Ok(1) => break,
-      Ok(_) => continue,
-      Err(_) => break,
     }
   }
 
@@ -1681,6 +1326,438 @@ fn http2_stop(mut cx: FunctionContext) -> JsResult<JsUndefined> {
   Ok(cx.undefined())
 }
 
+fn ws_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
+  let js_opts = cx.argument::<JsString>(0)?.value(&mut cx);
+  let opts: JSON = match serde_json::from_str(&js_opts) {
+    Ok(json) => json,
+    Err(_) => {
+      println!("[Arnelify Server]: NEON error in ws_create: Invalid JSON in 'c_opts'.");
+      return Ok(cx.number(0.0));
+    }
+  };
+
+  let id: &Mutex<u64> = WS_ID.get_or_init(|| Mutex::new(0));
+  let new_id: u64 = {
+    let mut js: MutexGuard<'_, u64> = id.lock().unwrap();
+    *js += 1;
+    *js
+  };
+
+  let uds_opts: UnixDomainSocketOpts = UnixDomainSocketOpts {
+    block_size_kb: get_usize(&opts, "block_size_kb"),
+    socket_path: get_str(&opts, "socket_path"),
+    thread_limit: get_u64(&opts, "thread_limit"),
+  };
+
+  let uds_ws_close: Arc<UnixDomainSocketHandler> = Arc::new(
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+      let args: JSON = ctx.lock().unwrap().clone();
+
+      match args.as_array() {
+        Some(v) => {
+          let stream_id: u64 = v[0].as_u64().unwrap_or(0);
+          if let Some(map) = WS_STREAMS.get() {
+            let stream: Option<(Arc<Mutex<WebSocketStream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, WebSocketStreams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
+              Some((stream_arc, tx)) => {
+                let mut stream_lock: MutexGuard<'_, WebSocketStream> = stream_arc.lock().unwrap();
+                stream_lock.close();
+                let _ = tx.send(1);
+              }
+              None => {
+                let args: JSON =
+                  serde_json::json!(["error", "NEON error in uds_ws_close: No stream found."]);
+
+                if let Some(map) = WS_UDS_MAP.get() {
+                  if let Some(uds) = map.lock().unwrap().get(&new_id) {
+                    uds.push("ws_logger", &args, Vec::new(), true);
+                  }
+                }
+              }
+            }
+          }
+        }
+        None => {}
+      }
+    },
+  );
+
+  let uds_ws_push: Arc<UnixDomainSocketHandler> = Arc::new(
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+      let args: JSON = ctx.lock().unwrap().clone();
+
+      match args.as_array() {
+        Some(v) => {
+          let stream_id: u64 = v[0].as_u64().unwrap_or(0);
+          let json: JSON = v[1].clone();
+          let bytes: Vec<u8> = bytes.lock().unwrap().clone();
+
+          if let Some(map) = WS_STREAMS.get() {
+            let stream: Option<(Arc<Mutex<WebSocketStream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, WebSocketStreams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
+              Some((stream_arc, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, WebSocketStream> = stream_arc.lock().unwrap();
+                stream_lock.push(&json, &bytes);
+              }
+              None => {
+                let args: JSON =
+                  serde_json::json!(["error", "NEON error in uds_ws_push: No stream found."]);
+
+                if let Some(map) = WS_UDS_MAP.get() {
+                  if let Some(uds) = map.lock().unwrap().get(&new_id) {
+                    uds.push("ws_logger", &args, Vec::new(), true);
+                  }
+                }
+              }
+            }
+          }
+        }
+        None => {}
+      }
+    },
+  );
+
+  let uds_ws_push_bytes: Arc<UnixDomainSocketHandler> = Arc::new(
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+      let args: JSON = ctx.lock().unwrap().clone();
+
+      match args.as_array() {
+        Some(v) => {
+          let stream_id: u64 = v[0].as_u64().unwrap_or(0);
+          let bytes: Vec<u8> = bytes.lock().unwrap().clone();
+
+          if let Some(map) = WS_STREAMS.get() {
+            let stream: Option<(Arc<Mutex<WebSocketStream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, WebSocketStreams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
+              Some((stream_arc, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, WebSocketStream> = stream_arc.lock().unwrap();
+                stream_lock.push_bytes(&bytes);
+              }
+              None => {
+                let args: JSON =
+                  serde_json::json!(["error", "NEON error in uds_ws_push_bytes: No stream found."]);
+
+                if let Some(map) = WS_UDS_MAP.get() {
+                  if let Some(uds) = map.lock().unwrap().get(&new_id) {
+                    uds.push("ws_logger", &args, Vec::new(), true);
+                  }
+                }
+              }
+            }
+          }
+        }
+        None => {}
+      }
+    },
+  );
+
+  let uds_ws_push_json: Arc<UnixDomainSocketHandler> = Arc::new(
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+      let args: JSON = ctx.lock().unwrap().clone();
+
+      match args.as_array() {
+        Some(v) => {
+          let stream_id: u64 = v[0].as_u64().unwrap_or(0);
+          let json: JSON = v[1].clone();
+
+          if let Some(map) = WS_STREAMS.get() {
+            let stream: Option<(Arc<Mutex<WebSocketStream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, WebSocketStreams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
+              Some((stream_arc, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, WebSocketStream> = stream_arc.lock().unwrap();
+                stream_lock.push_json(&json);
+              }
+              None => {
+                let args: JSON =
+                  serde_json::json!(["error", "NEON error in uds_ws_push_json: No stream found."]);
+
+                if let Some(map) = WS_UDS_MAP.get() {
+                  if let Some(uds) = map.lock().unwrap().get(&new_id) {
+                    uds.push("ws_logger", &args, Vec::new(), true);
+                  }
+                }
+              }
+            }
+          }
+        }
+        None => {}
+      }
+    },
+  );
+
+  let uds_ws_set_compression: Arc<UnixDomainSocketHandler> = Arc::new(
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+      let args: JSON = ctx.lock().unwrap().clone();
+
+      match args.as_array() {
+        Some(v) => {
+          let stream_id: u64 = v[0].as_u64().unwrap_or(0);
+          let compression: &str = v[1].as_str().unwrap_or("");
+
+          if let Some(map) = WS_STREAMS.get() {
+            let stream: Option<(Arc<Mutex<WebSocketStream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, WebSocketStreams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
+              Some((stream_arc, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, WebSocketStream> = stream_arc.lock().unwrap();
+                if compression.len() > 0 {
+                  stream_lock.set_compression(Some(String::from(compression)));
+                  return;
+                }
+
+                stream_lock.set_compression(None);
+              }
+              None => {
+                let args: JSON = serde_json::json!([
+                  "error",
+                  "NEON error in uds_ws_set_compression: No stream found."
+                ]);
+
+                if let Some(map) = WS_UDS_MAP.get() {
+                  if let Some(uds) = map.lock().unwrap().get(&new_id) {
+                    uds.push("ws_logger", &args, Vec::new(), true);
+                  }
+                }
+              }
+            }
+          }
+        }
+        None => {}
+      }
+    },
+  );
+
+  let mut uds: UnixDomainSocket = UnixDomainSocket::new(uds_opts);
+  uds.on("ws_close", uds_ws_close);
+  uds.on("ws_push", uds_ws_push);
+  uds.on("ws_push_bytes", uds_ws_push_bytes);
+  uds.on("ws_push_json", uds_ws_push_json);
+  uds.on("ws_set_compression", uds_ws_set_compression);
+
+  let uds_map: &Mutex<HashMap<u64, Arc<UnixDomainSocket>>> =
+    WS_UDS_MAP.get_or_init(|| Mutex::new(HashMap::new()));
+  {
+    uds_map.lock().unwrap().insert(new_id as u64, Arc::new(uds));
+  }
+
+  let ws_opts: WebSocketOpts = WebSocketOpts {
+    block_size_kb: get_usize(&opts, "block_size_kb"),
+    compression: get_bool(&opts, "compression"),
+    handshake_timeout: get_u64(&opts, "handshake_timeout"),
+    max_message_size_kb: get_u64(&opts, "max_message_size_kb"),
+    ping_timeout: get_u64(&opts, "ping_timeout"),
+    port: get_u16(&opts, "port"),
+    send_timeout: get_u64(&opts, "send_timeout"),
+    thread_limit: get_u64(&opts, "thread_limit"),
+  };
+
+  let ws: WebSocket = WebSocket::new(ws_opts);
+  let ws_map: &Mutex<HashMap<u64, Arc<WebSocket>>> =
+    WS_MAP.get_or_init(|| Mutex::new(HashMap::new()));
+  {
+    ws_map.lock().unwrap().insert(new_id as u64, Arc::new(ws));
+  }
+
+  Ok(cx.number(new_id as f64))
+}
+
+fn ws_destroy(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+  let js_id: f64 = cx.argument::<JsNumber>(0)?.value(&mut cx);
+  let id: u64 = js_id as u64;
+
+  if let Some(map) = WS_MAP.get() {
+    map.lock().unwrap().remove(&id);
+  }
+
+  if let Some(map) = WS_UDS_MAP.get() {
+    map.lock().unwrap().remove(&id);
+  }
+
+  Ok(cx.undefined())
+}
+
+fn ws_logger(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+  let js_id: f64 = cx.argument::<JsNumber>(0)?.value(&mut cx);
+  let id: u64 = js_id as u64;
+
+  let ws_logger: Arc<WebSocketLogger> = Arc::new(move |level: &str, message: &str| -> () {
+    let args: JSON = serde_json::json!([level, message]);
+    let bytes: UnixDomainSocketBytes = Vec::new();
+
+    if let Some(map) = WS_UDS_MAP.get() {
+      if let Some(uds) = map.lock().unwrap().get(&id) {
+        uds.push("ws_logger", &args, bytes, true);
+      }
+    }
+  });
+
+  if let Some(map) = WS_MAP.get() {
+    if let Some(ws) = map.lock().unwrap().get(&id) {
+      ws.logger(ws_logger);
+    }
+  }
+
+  Ok(cx.undefined())
+}
+
+fn ws_on(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+  let js_id: f64 = cx.argument::<JsNumber>(0)?.value(&mut cx);
+  let topic: String = cx.argument::<JsString>(1)?.value(&mut cx);
+  let id: u64 = js_id as u64;
+
+  let topic_safe: String = topic.clone();
+  let ws_handler: Arc<WebSocketHandler> = Arc::new(
+    move |ctx: Arc<Mutex<WebSocketCtx>>,
+          bytes: Arc<Mutex<WebSocketBytes>>,
+          stream: Arc<Mutex<WebSocketStream>>|
+          -> () {
+      let (tx, rx) = mpsc::channel::<u8>();
+      let stream_id: u64 = WS_STREAM_ID.fetch_add(1, Ordering::Relaxed);
+
+      WS_STREAMS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap()
+        .insert(stream_id, (stream, tx));
+
+      let ctx: WebSocketCtx = ctx.lock().unwrap().clone();
+      let args: JSON = serde_json::json!([stream_id, topic_safe, ctx]);
+      let bytes: WebSocketBytes = bytes.lock().unwrap().clone();
+
+      if let Some(map) = WS_UDS_MAP.get() {
+        if let Some(uds) = map.lock().unwrap().get(&id) {
+          uds.push("ws_on", &args, bytes, true);
+        }
+      }
+
+      loop {
+        match rx.recv_timeout(Duration::from_secs(90)) {
+          Ok(val) => {
+            if val == 1 {
+              break;
+            }
+          }
+          Err(RecvTimeoutError::Timeout) => {
+            let args: JSON =
+              serde_json::json!(["error", "NEON error in ws_on: Stream response timeout."]);
+            if let Some(map) = WS_UDS_MAP.get() {
+              if let Some(uds) = map.lock().unwrap().get(&id) {
+                uds.push("ws_logger", &args, Vec::new(), true);
+              }
+            }
+            break;
+          }
+          Err(RecvTimeoutError::Disconnected) => {
+            let args: JSON =
+              serde_json::json!(["error", "NEON error in ws_on: Stream channel disconnected."]);
+            if let Some(map) = WS_UDS_MAP.get() {
+              if let Some(uds) = map.lock().unwrap().get(&id) {
+                uds.push("ws_logger", &args, Vec::new(), true);
+              }
+            }
+
+            break;
+          }
+        }
+      }
+
+      if let Some(map) = WS_STREAMS.get() {
+        map.lock().unwrap().remove(&stream_id);
+      }
+    },
+  );
+
+  if let Some(map) = WS_MAP.get() {
+    if let Some(ws) = map.lock().unwrap().get(&id) {
+      ws.on(&topic, ws_handler);
+    }
+  }
+
+  Ok(cx.undefined())
+}
+
+fn ws_start_ipc(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+  let js_id: f64 = cx.argument::<JsNumber>(0)?.value(&mut cx);
+  let id: u64 = js_id as u64;
+
+  let (tx, rx) = mpsc::channel::<u8>();
+
+  if let Some(map) = WS_UDS_MAP.get() {
+    if let Some(uds) = map.lock().unwrap().get(&id) {
+      let uds_safe: Arc<UnixDomainSocket> = Arc::clone(uds);
+      thread::spawn(move || {
+        uds_safe.start(Arc::new(move || {
+          let _ = tx.send(1);
+        }));
+      });
+    }
+  }
+
+  loop {
+    match rx.recv() {
+      Ok(1) => break,
+      Ok(_) => continue,
+      Err(_) => break,
+    }
+  }
+
+  Ok(cx.undefined())
+}
+
+fn ws_start(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+  let js_id: f64 = cx.argument::<JsNumber>(0)?.value(&mut cx);
+  let id: u64 = js_id as u64;
+
+  if let Some(map) = WS_MAP.get() {
+    if let Some(ws) = map.lock().unwrap().get(&id) {
+      let ws_safe: Arc<WebSocket> = Arc::clone(ws);
+      thread::spawn(move || {
+        ws_safe.start();
+      });
+    }
+  }
+
+  Ok(cx.undefined())
+}
+
+fn ws_stop(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+  let js_id: f64 = cx.argument::<JsNumber>(0)?.value(&mut cx);
+  let id: u64 = js_id as u64;
+
+  if let Some(map) = WS_UDS_MAP.get() {
+    if let Some(uds) = map.lock().unwrap().get(&id) {
+      uds.stop();
+    }
+  }
+
+  if let Some(map) = WS_MAP.get() {
+    if let Some(ws) = map.lock().unwrap().get(&id) {
+      ws.stop();
+    }
+  }
+
+  Ok(cx.undefined())
+}
+
 fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   let js_opts = cx.argument::<JsString>(0)?.value(&mut cx);
   let opts: JSON = match serde_json::from_str(&js_opts) {
@@ -1700,7 +1777,6 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
   let uds_opts: UnixDomainSocketOpts = UnixDomainSocketOpts {
     block_size_kb: get_usize(&opts, "block_size_kb"),
-    keep_alive: get_u8(&opts, "keep_alive"),
     socket_path: get_str(&opts, "socket_path"),
     thread_limit: get_u64(&opts, "thread_limit"),
   };
@@ -1716,8 +1792,12 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let value: String = v[2].as_str().unwrap_or("").to_string();
 
           if let Some(map) = HTTP3_STREAMS.get() {
-            let streams: MutexGuard<'_, Http3Streams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<Http3Stream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, Http3Streams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, Http3Stream> = stream_arc.lock().unwrap();
                 stream_lock.add_header(&key, &value);
@@ -1749,9 +1829,14 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
       match args.as_array() {
         Some(v) => {
           let stream_id: u64 = v[0].as_u64().unwrap_or(0);
+
           if let Some(map) = HTTP3_STREAMS.get() {
-            let streams: MutexGuard<'_, Http3Streams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<Http3Stream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, Http3Streams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, tx)) => {
                 let mut stream_lock: MutexGuard<'_, Http3Stream> = stream_arc.lock().unwrap();
                 stream_lock.end();
@@ -1783,14 +1868,15 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
         Some(v) => {
           let stream_id: u64 = v[0].as_u64().unwrap_or(0);
           let is_attachment: bool = v[1].as_u64().unwrap_or(0) != 0;
-          let bytes: Vec<u8> = {
-            let bytes_guard: MutexGuard<'_, Vec<u8>> = bytes.lock().unwrap();
-            bytes_guard.clone()
-          };
+          let bytes: Vec<u8> = bytes.lock().unwrap().clone();
 
           if let Some(map) = HTTP3_STREAMS.get() {
-            let streams: MutexGuard<'_, Http3Streams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<Http3Stream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, Http3Streams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, Http3Stream> = stream_arc.lock().unwrap();
                 stream_lock.push_bytes(&bytes, is_attachment);
@@ -1826,8 +1912,12 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let is_attachment: bool = v[2].as_u64().unwrap_or(0) != 0;
 
           if let Some(map) = HTTP3_STREAMS.get() {
-            let streams: MutexGuard<'_, Http3Streams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<Http3Stream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, Http3Streams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, Http3Stream> = stream_arc.lock().unwrap();
                 stream_lock.push_file(&file_path, is_attachment);
@@ -1863,8 +1953,12 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let is_attachment: bool = v[2].as_u64().unwrap_or(0) != 0;
 
           if let Some(map) = HTTP3_STREAMS.get() {
-            let streams: MutexGuard<'_, Http3Streams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<Http3Stream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, Http3Streams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, Http3Stream> = stream_arc.lock().unwrap();
                 stream_lock.push_json(&json, is_attachment);
@@ -1899,8 +1993,12 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let code: u64 = v[1].as_u64().unwrap_or(0);
 
           if let Some(map) = HTTP3_STREAMS.get() {
-            let streams: MutexGuard<'_, Http3Streams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<Http3Stream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, Http3Streams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, Http3Stream> = stream_arc.lock().unwrap();
                 stream_lock.set_code(code as u16);
@@ -1935,8 +2033,12 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let compression: &str = v[1].as_str().unwrap_or("");
 
           if let Some(map) = HTTP3_STREAMS.get() {
-            let streams: MutexGuard<'_, Http3Streams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<Http3Stream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, Http3Streams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, Http3Stream> = stream_arc.lock().unwrap();
                 if compression.len() > 0 {
@@ -1988,8 +2090,12 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           }
 
           if let Some(map) = HTTP3_STREAMS.get() {
-            let streams: MutexGuard<'_, Http3Streams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<Http3Stream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, Http3Streams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, Http3Stream> = stream_arc.lock().unwrap();
                 stream_lock.set_headers(headers);
@@ -2106,7 +2212,7 @@ fn http3_on(mut cx: FunctionContext) -> JsResult<JsUndefined> {
   let path: String = cx.argument::<JsString>(1)?.value(&mut cx);
   let id: u64 = js_id as u64;
 
-  let path_handler: String = path.clone();
+  let path_safe: String = path.clone();
   let http3_handler: Arc<Http3Handler> = Arc::new(
     move |ctx: Arc<Mutex<Http3Ctx>>, stream: Arc<Mutex<Http3Stream>>| -> () {
       let (tx, rx) = mpsc::channel::<u8>();
@@ -2118,24 +2224,18 @@ fn http3_on(mut cx: FunctionContext) -> JsResult<JsUndefined> {
         .unwrap()
         .insert(stream_id, (stream, tx));
 
-      let ctx: Http3Ctx = {
-        let ctx_lock: std::sync::MutexGuard<'_, Http3Ctx> = ctx.lock().unwrap();
-        ctx_lock.clone()
-      };
-
-      let args: JSON = serde_json::json!([stream_id, path_handler, ctx]);
+      let ctx: Http3Ctx = ctx.lock().unwrap().clone();
+      let args: JSON = serde_json::json!([stream_id, path_safe, ctx]);
       let bytes: UnixDomainSocketBytes = Vec::new();
 
-      let mut keep_alive: u64 = 0;
       if let Some(map) = HTTP3_UDS_MAP.get() {
         if let Some(uds) = map.lock().unwrap().get(&id) {
-          keep_alive = uds.get_keep_alive() as u64;
           uds.push("http3_on", &args, bytes, true);
         }
       }
 
       loop {
-        match rx.recv_timeout(Duration::from_secs(keep_alive)) {
+        match rx.recv_timeout(Duration::from_secs(90)) {
           Ok(val) => {
             if val == 1 {
               break;
@@ -2182,7 +2282,7 @@ fn http3_on(mut cx: FunctionContext) -> JsResult<JsUndefined> {
   Ok(cx.undefined())
 }
 
-fn http3_start(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+fn http3_start_ipc(mut cx: FunctionContext) -> JsResult<JsUndefined> {
   let js_id: f64 = cx.argument::<JsNumber>(0)?.value(&mut cx);
   let id: u64 = js_id as u64;
 
@@ -2199,20 +2299,27 @@ fn http3_start(mut cx: FunctionContext) -> JsResult<JsUndefined> {
     }
   }
 
+  loop {
+    match rx.recv() {
+      Ok(1) => break,
+      Ok(_) => continue,
+      Err(_) => break,
+    }
+  }
+
+  Ok(cx.undefined())
+}
+
+fn http3_start(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+  let js_id: f64 = cx.argument::<JsNumber>(0)?.value(&mut cx);
+  let id: u64 = js_id as u64;
+
   if let Some(map) = HTTP3_MAP.get() {
     if let Some(http3) = map.lock().unwrap().get(&id) {
       let http3_safe: Arc<Http3> = Arc::clone(http3);
       thread::spawn(move || {
         http3_safe.start();
       });
-    }
-  }
-
-  loop {
-    match rx.recv() {
-      Ok(1) => break,
-      Ok(_) => continue,
-      Err(_) => break,
     }
   }
 
@@ -2257,7 +2364,6 @@ fn wt_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
   let uds_opts: UnixDomainSocketOpts = UnixDomainSocketOpts {
     block_size_kb: get_usize(&opts, "block_size_kb"),
-    keep_alive: get_u8(&opts, "keep_alive"),
     socket_path: get_str(&opts, "socket_path"),
     thread_limit: get_u64(&opts, "thread_limit"),
   };
@@ -2270,8 +2376,12 @@ fn wt_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
         Some(v) => {
           let stream_id: u64 = v[0].as_u64().unwrap_or(0);
           if let Some(map) = WT_STREAMS.get() {
-            let streams: MutexGuard<'_, WebTransportStreams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<WebTransportStream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, WebTransportStreams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, tx)) => {
                 let mut stream_lock: MutexGuard<'_, WebTransportStream> =
                   stream_arc.lock().unwrap();
@@ -2304,14 +2414,15 @@ fn wt_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
         Some(v) => {
           let stream_id: u64 = v[0].as_u64().unwrap_or(0);
           let json: JSON = v[1].clone();
-          let bytes: Vec<u8> = {
-            let bytes_guard: MutexGuard<'_, Vec<u8>> = bytes.lock().unwrap();
-            bytes_guard.clone()
-          };
+          let bytes: Vec<u8> = bytes.lock().unwrap().clone();
 
           if let Some(map) = WT_STREAMS.get() {
-            let streams: MutexGuard<'_, WebTransportStreams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<WebTransportStream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, WebTransportStreams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, WebTransportStream> =
                   stream_arc.lock().unwrap();
@@ -2342,14 +2453,15 @@ fn wt_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
       match args.as_array() {
         Some(v) => {
           let stream_id: u64 = v[0].as_u64().unwrap_or(0);
-          let bytes: Vec<u8> = {
-            let bytes_guard: MutexGuard<'_, Vec<u8>> = bytes.lock().unwrap();
-            bytes_guard.clone()
-          };
+          let bytes: Vec<u8> = bytes.lock().unwrap().clone();
 
           if let Some(map) = WT_STREAMS.get() {
-            let streams: MutexGuard<'_, WebTransportStreams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<WebTransportStream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, WebTransportStreams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, WebTransportStream> =
                   stream_arc.lock().unwrap();
@@ -2383,8 +2495,12 @@ fn wt_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let json: JSON = v[1].clone();
 
           if let Some(map) = WT_STREAMS.get() {
-            let streams: MutexGuard<'_, WebTransportStreams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<WebTransportStream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, WebTransportStreams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, WebTransportStream> =
                   stream_arc.lock().unwrap();
@@ -2418,8 +2534,12 @@ fn wt_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let compression: &str = v[1].as_str().unwrap_or("");
 
           if let Some(map) = WT_STREAMS.get() {
-            let streams: MutexGuard<'_, WebTransportStreams> = map.lock().unwrap();
-            match streams.get(&stream_id) {
+            let stream: Option<(Arc<Mutex<WebTransportStream>>, mpsc::Sender<u8>)> = {
+              let streams: MutexGuard<'_, WebTransportStreams> = map.lock().unwrap();
+              streams.get(&stream_id).cloned()
+            };
+
+            match stream {
               Some((stream_arc, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, WebTransportStream> =
                   stream_arc.lock().unwrap();
@@ -2530,7 +2650,7 @@ fn wt_on(mut cx: FunctionContext) -> JsResult<JsUndefined> {
   let topic: String = cx.argument::<JsString>(1)?.value(&mut cx);
   let id: u64 = js_id as u64;
 
-  let topic_handler: String = topic.clone();
+  let topic_safe: String = topic.clone();
   let wt_handler: Arc<WebTransportHandler> = Arc::new(
     move |ctx: Arc<Mutex<WebTransportCtx>>,
           bytes: Arc<Mutex<WebTransportBytes>>,
@@ -2545,24 +2665,18 @@ fn wt_on(mut cx: FunctionContext) -> JsResult<JsUndefined> {
         .unwrap()
         .insert(stream_id, (stream, tx));
 
-      let ctx: WebTransportCtx = {
-        let ctx_lock: std::sync::MutexGuard<'_, WebTransportCtx> = ctx.lock().unwrap();
-        ctx_lock.clone()
-      };
+      let ctx: WebTransportCtx = ctx.lock().unwrap().clone();
+      let args: JSON = serde_json::json!([stream_id, topic_safe, ctx]);
+      let bytes: WebTransportBytes = bytes.lock().unwrap().clone();
 
-      let args: JSON = serde_json::json!([stream_id, topic_handler, ctx]);
-      let bytes: UnixDomainSocketBytes = bytes.lock().unwrap().clone();
-
-      let mut keep_alive: u64 = 0;
       if let Some(map) = WT_UDS_MAP.get() {
         if let Some(uds) = map.lock().unwrap().get(&id) {
-          keep_alive = uds.get_keep_alive() as u64;
           uds.push("wt_on", &args, bytes, true);
         }
       }
 
       loop {
-        match rx.recv_timeout(Duration::from_secs(keep_alive)) {
+        match rx.recv_timeout(Duration::from_secs(90)) {
           Ok(val) => {
             if val == 1 {
               break;
@@ -2607,7 +2721,7 @@ fn wt_on(mut cx: FunctionContext) -> JsResult<JsUndefined> {
   Ok(cx.undefined())
 }
 
-fn wt_start(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+fn wt_start_ipc(mut cx: FunctionContext) -> JsResult<JsUndefined> {
   let js_id: f64 = cx.argument::<JsNumber>(0)?.value(&mut cx);
   let id: u64 = js_id as u64;
 
@@ -2624,20 +2738,27 @@ fn wt_start(mut cx: FunctionContext) -> JsResult<JsUndefined> {
     }
   }
 
+  loop {
+    match rx.recv() {
+      Ok(1) => break,
+      Ok(_) => continue,
+      Err(_) => break,
+    }
+  }
+
+  Ok(cx.undefined())
+}
+
+fn wt_start(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+  let js_id: f64 = cx.argument::<JsNumber>(0)?.value(&mut cx);
+  let id: u64 = js_id as u64;
+
   if let Some(map) = WT_MAP.get() {
     if let Some(wt) = map.lock().unwrap().get(&id) {
       let wt_safe: Arc<WebTransport> = Arc::clone(wt);
       thread::spawn(move || {
         wt_safe.start();
       });
-    }
-  }
-
-  loop {
-    match rx.recv() {
-      Ok(1) => break,
-      Ok(_) => continue,
-      Err(_) => break,
     }
   }
 
@@ -2669,27 +2790,31 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
   cx.export_function("http1_destroy", http1_destroy)?;
   cx.export_function("http1_logger", http1_logger)?;
   cx.export_function("http1_on", http1_on)?;
+  cx.export_function("http1_start_ipc", http1_start_ipc)?;
   cx.export_function("http1_start", http1_start)?;
   cx.export_function("http1_stop", http1_stop)?;
-
-  cx.export_function("ws_create", ws_create)?;
-  cx.export_function("ws_destroy", ws_destroy)?;
-  cx.export_function("ws_logger", ws_logger)?;
-  cx.export_function("ws_on", ws_on)?;
-  cx.export_function("ws_start", ws_start)?;
-  cx.export_function("ws_stop", ws_stop)?;
 
   cx.export_function("http2_create", http2_create)?;
   cx.export_function("http2_destroy", http2_destroy)?;
   cx.export_function("http2_logger", http2_logger)?;
   cx.export_function("http2_on", http2_on)?;
+  cx.export_function("http2_start_ipc", http2_start_ipc)?;
   cx.export_function("http2_start", http2_start)?;
   cx.export_function("http2_stop", http2_stop)?;
+
+  cx.export_function("ws_create", ws_create)?;
+  cx.export_function("ws_destroy", ws_destroy)?;
+  cx.export_function("ws_logger", ws_logger)?;
+  cx.export_function("ws_on", ws_on)?;
+  cx.export_function("ws_start_ipc", ws_start_ipc)?;
+  cx.export_function("ws_start", ws_start)?;
+  cx.export_function("ws_stop", ws_stop)?;
 
   cx.export_function("http3_create", http3_create)?;
   cx.export_function("http3_destroy", http3_destroy)?;
   cx.export_function("http3_logger", http3_logger)?;
   cx.export_function("http3_on", http3_on)?;
+  cx.export_function("http3_start_ipc", http3_start_ipc)?;
   cx.export_function("http3_start", http3_start)?;
   cx.export_function("http3_stop", http3_stop)?;
 
@@ -2697,6 +2822,7 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
   cx.export_function("wt_destroy", wt_destroy)?;
   cx.export_function("wt_logger", wt_logger)?;
   cx.export_function("wt_on", wt_on)?;
+  cx.export_function("wt_start_ipc", wt_start_ipc)?;
   cx.export_function("wt_start", wt_start)?;
   cx.export_function("wt_stop", wt_stop)?;
 

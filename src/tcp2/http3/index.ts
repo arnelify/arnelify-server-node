@@ -46,14 +46,14 @@ type Http3Opts = {
   thread_limit: number;
 };
 
-type Http3Ctx = [];
+type Http3Ctx = Record<string, any>;
 
 class Http3Stream {
   id: number = 0;
   topic: string = "";
 
-  cb_send: (topic: string, args: any[], bytes: Buffer) => void =
-    (topic: string, args: any[], bytes: Buffer): void => {
+  cb_send: (topic: string, args: any[], bytes: Buffer) => Promise<void> =
+    async (_topic: string, _args: any[], bytes: Buffer): Promise<void> => {
       console.log(bytes);
     };
 
@@ -62,85 +62,51 @@ class Http3Stream {
   }
 
   add_header(key: string, value: string): void {
-    const args: any[] = [
-      this.id,
-      key,
-      value
-    ];
-
+    const args: any[] = [this.id, key, value];
     this.cb_send("http3_add_header", args, Buffer.alloc(0));
   }
 
-  end(): void {
-    const args: any[] = [
-      this.id
-    ];
-
-    this.cb_send("http3_end", args, Buffer.alloc(0));
+  async end(): Promise<void> {
+    const args: any[] = [this.id];
+    await this.cb_send("http3_end", args, Buffer.alloc(0));
   }
 
-  on_send(cb: (topic: string, args: any[], bytes: Buffer) => void): void {
+  on_send(cb: (topic: string, args: any[], bytes: Buffer) => Promise<void>): void {
     this.cb_send = cb;
   }
 
-  push_bytes(bytes: Buffer, is_attachment: boolean = false): void {
-    const args: any[] = [
-      this.id,
-      is_attachment ? 1 : 0
-    ];
-
-    this.cb_send("http3_push_bytes", args, bytes);
+  async push_bytes(bytes: Buffer, is_attachment: boolean = false): Promise<void> {
+    const args: any[] = [this.id, is_attachment ? 1 : 0];
+    await this.cb_send("http3_push_bytes", args, bytes);
   }
 
-  push_file(file_path: string, is_attachment: boolean): void {
-    const args: any[] = [
-      this.id,
-      file_path,
-      is_attachment ? 1 : 0
-    ];
-
-    this.cb_send("http3_push_file", args, Buffer.alloc(0));
+  async push_file(file_path: string, is_attachment: boolean): Promise<void> {
+    const args: any[] = [this.id, file_path, is_attachment ? 1 : 0];
+    await this.cb_send("http3_push_file", args, Buffer.alloc(0));
   }
 
-  push_json(json: any, is_attachment: boolean = false): void {
-    const args: any[] = [
-      this.id,
-      json,
-      is_attachment ? 1 : 0
-    ];
-
-    this.cb_send("http3_push_json", args, Buffer.alloc(0));
+  async push_json(json: any, is_attachment: boolean = false): Promise<void> {
+    const args: any[] = [this.id, json, is_attachment ? 1 : 0];
+    await this.cb_send("http3_push_json", args, Buffer.alloc(0));
   }
 
   set_code(code: number): void {
-    const args: any[] = [
-      this.id,
-      code
-    ];
-
+    const args: any[] = [this.id, code];
     this.cb_send("http3_set_code", args, Buffer.alloc(0));
   }
 
   set_compression(compression: null | string): void {
-    const args: any[] = [
-      this.id,
-      compression ? compression : ""
-    ];
-
+    const args: any[] = [this.id, compression ? compression : ""];
     this.cb_send("http3_set_compression", args, Buffer.alloc(0));
   }
 
   set_headers(headers: Record<string, string>[]): void {
-    const args: any[] = [
-      this.id,
-      headers
-    ];
-
+    const args: any[] = [this.id, headers];
     this.cb_send("http3_set_headers", args, Buffer.alloc(0));
   }
 }
 
-type Http3Handler = (ctx: Http3Ctx, stream: Http3Stream) => void;
+type Http3Handler = (ctx: Http3Ctx, stream: Http3Stream) => Promise<void>;
 
 class Http3 {
   id: number = 0;
@@ -154,7 +120,6 @@ class Http3 {
 
     const uds_opts: UnixDomainSocketOpts = {
       block_size_kb: opts.block_size_kb,
-      keep_alive: opts.keep_alive,
       socket_path: this.socket_path,
       thread_limit: opts.thread_limit
     };
@@ -167,33 +132,36 @@ class Http3 {
   }
 
   logger(cb: any): void {
-    this.uds.on('http3_logger', (ctx: UnixDomainSocketCtx, _bytes: UnixDomainSocketBytes): void => {
+    this.uds.on('http3_logger', async (ctx: UnixDomainSocketCtx, _bytes: UnixDomainSocketBytes): Promise<void> => {
       const [level, message] = ctx;
-      cb(level, message);
+      await cb(level, message);
     });
+
+    native.http3_logger(this.id);
   }
 
   on(path: string, cb: Http3Handler): void {
     this.handlers[path] = cb;
 
-    this.uds.on('http3_on', (ctx: UnixDomainSocketCtx, _bytes: UnixDomainSocketBytes): void => {
+    this.uds.on('http3_on', async (ctx: UnixDomainSocketCtx, _bytes: UnixDomainSocketBytes): Promise<void> => {
       const [stream_id, handler_path, handler_ctx] = ctx;
 
       const stream = new Http3Stream(stream_id);
-      stream.on_send((topic, args, buffer): void => {
-        this.uds.push(topic, args, buffer);
+      stream.on_send(async (topic, args, buffer): Promise<void> => {
+        await this.uds.push(topic, args, buffer);
       });
 
-      const cb = this.handlers[handler_path];
-      cb(handler_ctx, stream);
+      const handler = this.handlers[handler_path];
+      if (handler) await handler(handler_ctx, stream);
     });
 
     native.http3_on(this.id, path);
   }
 
   async start(): Promise<void> {
+    native.http3_start_ipc(this.id);
+    await this.uds.start();
     native.http3_start(this.id);
-    this.uds.start();
   }
 
   async stop(): Promise<void> {
