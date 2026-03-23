@@ -1,6 +1,6 @@
 <img src="https://static.wikia.nocookie.net/arnelify/images/c/c8/Arnelify-logo-2024.png/revision/latest?cb=20240701012515" style="width:336px;" alt="Arnelify Logo" />
 
-![Arnelify Server for NodeJS](https://img.shields.io/badge/Arnelify%20Server%20for%20NodeJS-0.9.7-yellow) ![NodeJS](https://img.shields.io/badge/NodeJS-22.13.1-green) ![Bun](https://img.shields.io/badge/Bun-1.2.0-blue)
+![Arnelify Server for NodeJS](https://img.shields.io/badge/Arnelify%20Server%20for%20NodeJS-0.9.8-yellow) ![NodeJS](https://img.shields.io/badge/NodeJS-22.13.1-green) ![Bun](https://img.shields.io/badge/Bun-1.2.0-blue)
 
 ## 🚀 About
 
@@ -9,11 +9,11 @@
 All supported protocols:
 | **#** | **Protocol** | **Transport** |
 | - | - | - |
-| 1 | TCP1 | HTTP 1.1 |
-| 2 | TCP1 | HTTP 2.0 |
+| 1 | TCP2 | WebTransport |
+| 2 | TCP2 | HTTP 3.0 |
 | 3 | TCP1 | WebSocket |
-| 4 | TCP2 | HTTP 3.0 |
-| 5 | TCP2 | WebTransport |
+| 4 | TCP1 | HTTP 2.0 |
+| 5 | TCP1 | HTTP 1.1 |
 
 ## 📋 Minimal Requirements
 > Important: It's strongly recommended to use in a container that has been built from the gcc v15.2.0 image.
@@ -103,6 +103,7 @@ import {
 | **CERT_PEM**| Path to the TLS cert-file in PEM format. |
 | **CHARSET**| Defines the encoding that the server will recommend to all client applications. |
 | **COMPRESSION**| If this option is enabled, the server will use BROTLI compression if the client application supports it. This setting increases CPU resource consumption. The server will not use compression if the data size exceeds the value of **BLOCK_SIZE_KB**. |
+| **KEEP_ALIVE**| defines how long the HTTP server keeps a connection. |
 | **KEEP_EXTENSIONS**| If this option is enabled, file extensions will be preserved. |
 | **KEY_PEM**| Path to the TLS private key-file in PEM format. |
 | **MAX_FIELDS**| Defines the maximum number of fields in the received form. |
@@ -231,6 +232,7 @@ import {
 | **CERT_PEM**| Path to the TLS cert-file in PEM format. |
 | **CHARSET**| Defines the encoding that the server will recommend to all client applications. |
 | **COMPRESSION**| If this option is enabled, the server will use BROTLI compression if the client application supports it. This setting increases CPU resource consumption. The server will not use compression if the data size exceeds the value of **BLOCK_SIZE_KB**. |
+| **KEEP_ALIVE**| defines how long the HTTP server keeps a connection. |
 | **KEEP_EXTENSIONS**| If this option is enabled, file extensions will be preserved. |
 | **KEY_PEM**| Path to the TLS private key-file in PEM format. |
 | **MAX_FIELDS**| Defines the maximum number of fields in the received form. |
@@ -300,6 +302,7 @@ import {
 | **BLOCK_SIZE_KB**| The size of the allocated memory used for processing large packets. |
 | **CHARSET**| Defines the encoding that the server will recommend to all client applications. |
 | **COMPRESSION**| If this option is enabled, the server will use BROTLI compression if the client application supports it. This setting increases CPU resource consumption. The server will not use compression if the data size exceeds the value of **BLOCK_SIZE_KB**. |
+| **KEEP_ALIVE**| defines how long the HTTP server keeps a connection. |
 | **KEEP_EXTENSIONS**| If this option is enabled, file extensions will be preserved. |
 | **MAX_FIELDS**| Defines the maximum number of fields in the received form. |
 | **MAX_FIELDS_SIZE_TOTAL_MB**| Defines the maximum total size of all fields in the form. This option does not include file sizes. |
@@ -390,14 +393,16 @@ yarn test_http1
 ```
 
 ## ⭐ Release Notes
-Version 0.9.7 — a multi-language server with HTTP 3.0 and WebTransport support.
+Version 0.9.8 — a multi-language server with HTTP 3.0 and WebTransport support.
 
 We are excited to introduce the Arnelify Server for NodeJS! Please note that this version is raw and still in active development.
 
 Change log:
 
-* Async Multi-Threading.
-* Block processing in "on-the-fly" mode.
+* HTTP 3.0 + WebTransport.
+* Security-aware logging with attack detection.
+* Async Runtime & Multi-Threading.
+* Large file upload and download support.
 * BROTLI compression (still in development).
 * FFI, PYO3 and NEON support.
 * Significant refactoring and optimizations.

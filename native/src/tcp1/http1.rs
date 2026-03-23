@@ -23,11 +23,11 @@
 use std::{
   borrow,
   collections::HashMap,
-  fs::{File, Metadata, OpenOptions, metadata},
+  fs::{File, Metadata, OpenOptions},
   io::{Error, ErrorKind, Read, Write},
   path::Path,
   process,
-  sync::{Arc, Mutex},
+  sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard},
   time::{Duration, SystemTime, UNIX_EPOCH},
   vec,
 };
@@ -36,7 +36,7 @@ use tokio::{
   io::{AsyncReadExt, AsyncWriteExt},
   net::TcpListener,
   runtime::{Builder, Runtime},
-  sync::{mpsc, Notify},
+  sync::{Notify, mpsc},
   time::timeout,
 };
 
@@ -144,12 +144,13 @@ impl Http1Req {
       is_write: false,
       ctx: serde_json::json!({
         "_state": {
+          "addr": JSON::Null,
           "cookie": {},
           "headers": {},
           "method": "GET",
           "path": "/",
           "protocol": "HTTP/1.1",
-          "topic": JSON::Null
+          "topic": JSON::Null,
         },
         "params": {
           "files": {},
@@ -246,6 +247,10 @@ impl Http1Req {
 
   pub fn is_empty(&self) -> bool {
     self.buff.is_empty()
+  }
+
+  pub fn set_addr(&mut self, addr: &str) -> () {
+    self.ctx["_state"]["addr"] = JSON::String(String::from(addr));
   }
 
   fn set_body(&mut self) -> Result<u8, Error> {
@@ -1253,6 +1258,7 @@ impl Http1Req {
     self.is_write = false;
     self.ctx = serde_json::json!({
       "_state": {
+        "addr": JSON::Null,
         "cookie": {},
         "headers": {},
         "method": "GET",
@@ -1296,7 +1302,7 @@ pub struct Http1Stream {
   opts: Http1Opts,
   body: Option<Vec<u8>>,
   cb_logger: Arc<Http1Logger>,
-  cb_send: Arc<dyn Fn(&[u8], bool) + Send + Sync>,
+  cb_send: Arc<dyn Fn(Vec<u8>, bool) + Send + Sync>,
   code: u16,
   compression: Option<String>,
   content_length: usize,
@@ -1316,14 +1322,7 @@ impl Http1Stream {
       cb_logger: Arc::new(|_level: &str, message: &str| {
         println!("[Arnelify Server]: {}", message);
       }),
-      cb_send: Arc::new(|chunk: &[u8], _flush: bool| {
-        let data: String = match str::from_utf8(&chunk) {
-          Ok(s) => String::from(s),
-          Err(_) => String::from("<bytes>"),
-        };
-
-        println!("[Arnelify Server]: Sent: \r\n{}", data);
-      }),
+      cb_send: Arc::new(|_chunk: Vec<u8>, _flush: bool| {}),
       code: 200,
       compression: None,
       content_length: 0,
@@ -1357,7 +1356,7 @@ impl Http1Stream {
   }
 
   pub fn end(&mut self) -> () {
-    (self.cb_send)(&[], true);
+    (self.cb_send)(Vec::new(), true);
     self.reset();
   }
 
@@ -1432,7 +1431,7 @@ impl Http1Stream {
     }
   }
 
-  pub fn on_send(&mut self, cb: Arc<dyn Fn(&[u8], bool) + Send + Sync>) -> () {
+  pub fn on_send(&mut self, cb: Arc<dyn Fn(Vec<u8>, bool) + Send + Sync>) -> () {
     self.cb_send = cb;
   }
 
@@ -1448,7 +1447,7 @@ impl Http1Stream {
       };
 
       if !self.headers_sent {
-        let meta: Metadata = match metadata(&path) {
+        let meta: Metadata = match std::fs::metadata(&path) {
           Ok(m) => m,
           Err(_) => {
             (self.cb_logger)("error", "File not found.");
@@ -1473,12 +1472,9 @@ impl Http1Stream {
 
         self.add_header("Content-Length", &self.content_length.to_string());
         self.add_header("Content-Type", &self.content_type.to_string());
-        (self.cb_send)(&self.get_headers(), false);
+        (self.cb_send)(self.get_headers(), false);
         self.headers_sent = true;
       }
-
-      let block_size: usize = self.opts.block_size_kb * 1024;
-      let mut buff: Vec<u8> = vec![0u8; block_size];
 
       if self.opts.compression && self.compression.is_some() {
         if let Some(_compression) = &self.compression {
@@ -1486,7 +1482,10 @@ impl Http1Stream {
         }
       }
 
+      let block_size: usize = self.opts.block_size_kb * 1024;
+
       loop {
+        let mut buff: Vec<u8> = vec![0u8; block_size];
         let bytes_read: usize = match file.read(&mut buff) {
           Ok(0) => break,
           Ok(n) => n,
@@ -1496,7 +1495,8 @@ impl Http1Stream {
           }
         };
 
-        (self.cb_send)(&buff[..bytes_read], false);
+        buff.truncate(bytes_read);
+        (self.cb_send)(buff, false);
       }
 
       return;
@@ -1519,7 +1519,7 @@ impl Http1Stream {
 
         self.add_header("Content-Length", &self.content_length.to_string());
         self.add_header("Content-Type", &self.content_type.to_string());
-        (self.cb_send)(&self.get_headers(), false);
+        (self.cb_send)(self.get_headers(), false);
         self.headers_sent = true;
       }
 
@@ -1529,8 +1529,8 @@ impl Http1Stream {
         }
       }
 
-      if let Some(ref b) = self.body {
-        (self.cb_send)(&b, false);
+      if let Some(b) = self.body.take() {
+        (self.cb_send)(b, false);
       }
     }
   }
@@ -1632,207 +1632,349 @@ impl Http1Stream {
 pub type Http1Handler = dyn Fn(Arc<Mutex<Http1Ctx>>, Arc<Mutex<Http1Stream>>) + Send + Sync;
 pub type Http1Logger = dyn Fn(&str, &str) + Send + Sync;
 
+async fn disconnect(
+  handler: &Option<Arc<Http1Handler>>,
+  ctx: &Option<Arc<Mutex<Http1Ctx>>>,
+  opts: &Http1Opts,
+) {
+  if let (Some(handler), Some(ctx)) = (handler, ctx) {
+    let ctx_close: Arc<Mutex<Http1Ctx>> = Arc::clone(ctx);
+    let stream_close: Arc<Mutex<Http1Stream>> =
+      Arc::new(Mutex::new(Http1Stream::new(opts.clone())));
+    handler(ctx_close, stream_close);
+  }
+}
+
+async fn acceptor(
+  listener: &TcpListener,
+  logger: Arc<RwLock<Arc<Http1Logger>>>,
+  handlers: Arc<RwLock<HashMap<String, Arc<Http1Handler>>>>,
+  opts: Arc<Http1Opts>,
+) -> () {
+  let keep_alive: Duration = Duration::from_secs((*opts).keep_alive as u64);
+
+  match listener.accept().await {
+    Ok((socket, addr)) => {
+      let (mut reader, mut writer) = socket.into_split();
+      {
+        let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> = logger.read().unwrap();
+        (logger_lock)("info", &format!("Client {:?}: Connected", addr));
+      }
+
+      let logger_conn: Arc<RwLock<Arc<Http1Logger>>> = Arc::clone(&logger);
+      let handlers_conn: Arc<RwLock<HashMap<String, Arc<Http1Handler>>>> = Arc::clone(&handlers);
+      let opts_conn: Arc<Http1Opts> = Arc::clone(&opts);
+
+      // CONNECTION TASK
+      tokio::spawn(async move {
+        let block_size: usize = (*opts_conn).block_size_kb * 1024;
+        let mut buff: Vec<u8> = vec![0u8; block_size];
+        let mut req: Http1Req = Http1Req::new((*opts_conn).clone());
+        req.set_addr(&addr.to_string());
+
+        let mut no_bytes: bool = true;
+        let mut last_ctx: Option<Arc<Mutex<Http1Ctx>>> = None;
+        let (on_connect, on_disconnect) = {
+          let handlers_lock = handlers_conn.read().unwrap();
+          (
+            handlers_lock.get("_connect").cloned(),
+            handlers_lock.get("_disconnect").cloned(),
+          )
+        };
+
+        loop {
+          // READ TASK
+          let bytes_read: usize = match timeout(keep_alive, reader.read(&mut buff)).await {
+            Ok(Ok(0)) => {
+              disconnect(&on_disconnect, &last_ctx, &opts_conn).await;
+              let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> = logger_conn.read().unwrap();
+              logger_lock("info", &format!("Client {:?}: Disconnected", addr));
+              return;
+            }
+            Ok(Ok(n)) => n,
+            Ok(Err(e)) => {
+              disconnect(&on_disconnect, &last_ctx, &opts_conn).await;
+              let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> = logger_conn.read().unwrap();
+              logger_lock(
+                "warning",
+                &format!("Client {:?}: Socket read error: {}", addr, e),
+              );
+              return;
+            }
+            Err(_) => {
+              disconnect(&on_disconnect, &last_ctx, &opts_conn).await;
+              let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> = logger_conn.read().unwrap();
+              if no_bytes {
+                logger_lock("info", &format!("Client {:?}: Keep-alive timeout", addr));
+                return;
+              }
+
+              logger_lock("warning", &format!("Client {:?}: Read timeout", addr));
+              return;
+            }
+          };
+
+          req.add(&buff[..bytes_read]);
+          no_bytes = false;
+
+          loop {
+            match req.read_block() {
+              Ok(Some(_)) => {
+                let path: String = req.get_path();
+                let ctx: Arc<Mutex<Http1Ctx>> = Arc::new(Mutex::new(req.get_ctx()));
+                let compression: Option<String> = req.get_compression();
+                let payload: String = serde_json::to_string(&req.get_ctx()).unwrap();
+                req.reset();
+
+                let (tx, mut rx) = mpsc::channel::<StreamEvent>(32);
+                no_bytes = true;
+                {
+                  let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> =
+                    logger_conn.read().unwrap();
+                  logger_lock(
+                    "info",
+                    &format!("Client {:?}: Sent payload: {}", addr, payload),
+                  );
+                }
+
+                let stream: Arc<Mutex<Http1Stream>> =
+                  Arc::new(Mutex::new(Http1Stream::new((*opts_conn).clone())));
+                {
+                  let mut stream_lock = stream.lock().unwrap();
+                  stream_lock.on_send(Arc::new({
+                    let tx_safe: mpsc::Sender<StreamEvent> = tx.clone();
+                    move |chunk: Vec<u8>, flush: bool| {
+                      let _ = tx_safe.try_send(StreamEvent::BodyChunk { chunk, flush });
+                    }
+                  }));
+                  stream_lock.set_encoding((*opts_conn).charset.clone());
+                  stream_lock.set_compression(compression);
+                }
+
+                // ON CONNECT
+                match last_ctx {
+                  Some(_) => {}
+                  None => {
+                    let ctx_conn: Arc<Mutex<Http1Ctx>> = Arc::clone(&ctx);
+                    let stream_conn: Arc<Mutex<Http1Stream>> = Arc::clone(&stream);
+                    last_ctx = Some(Arc::clone(&ctx));
+                    if let Some(handler) = &on_connect {
+                      handler(ctx_conn, stream_conn);
+                    }
+                  }
+                }
+
+                let handler_opt: Option<Arc<Http1Handler>> = {
+                  let handlers_lock: RwLockReadGuard<'_, HashMap<String, Arc<Http1Handler>>> =
+                    handlers_conn.read().unwrap();
+                  handlers_lock
+                    .get(&path)
+                    .or_else(|| handlers_lock.get("_"))
+                    .cloned()
+                };
+
+                let ctx_handler: Arc<Mutex<Http1Ctx>> = Arc::clone(&ctx);
+                let stream_handler: Arc<Mutex<Http1Stream>> = Arc::clone(&stream);
+                if let Some(handler) = handler_opt {
+                  handler(ctx_handler, stream_handler);
+                }
+
+                drop(tx);
+
+                loop {
+                  // WRITE TASK
+                  match timeout(keep_alive, rx.recv()).await {
+                    Ok(Some(StreamEvent::BodyChunk { chunk, flush })) => {
+                      if !chunk.is_empty() {
+                        if let Err(e) = writer.write_all(&chunk).await {
+                          disconnect(&on_disconnect, &last_ctx, &opts_conn).await;
+                          let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> =
+                            logger_conn.read().unwrap();
+                          logger_lock("warning", &format!("Client {:?}: Write error: {}", addr, e));
+                          return;
+                        }
+                      }
+
+                      if flush {
+                        if let Err(e) = writer.flush().await {
+                          disconnect(&on_disconnect, &last_ctx, &opts_conn).await;
+                          let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> =
+                            logger_conn.read().unwrap();
+                          logger_lock("warning", &format!("Client {:?}: Flush error: {}", addr, e));
+                          return;
+                        }
+
+                        let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> =
+                          logger_conn.read().unwrap();
+                        logger_lock("info", &format!("Client {:?}: Write task finished", addr));
+                        break;
+                      }
+                    }
+                    Ok(None) => break,
+                    Err(_) => {
+                      disconnect(&on_disconnect, &last_ctx, &opts_conn).await;
+                      let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> =
+                        logger_conn.read().unwrap();
+                      logger_lock("warning", &format!("Client {:?}: Write timeout", addr));
+                      return;
+                    }
+                  }
+                }
+              }
+              Ok(None) => break,
+              Err(e) => match e.kind() {
+                ErrorKind::InvalidData => {
+                  disconnect(&on_disconnect, &last_ctx, &opts_conn).await;
+                  let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> =
+                    logger_conn.read().unwrap();
+                  logger_lock(
+                    "warning",
+                    &format!("Client {:?}: Block read error: {}", addr, e),
+                  );
+
+                  return;
+                }
+                _ => {
+                  let (tx, mut rx) = mpsc::channel::<StreamEvent>(32);
+                  let stream: Arc<Mutex<Http1Stream>> =
+                    Arc::new(Mutex::new(Http1Stream::new((*opts_conn).clone())));
+                  {
+                    let mut stream_lock = stream.lock().unwrap();
+                    stream_lock.on_send(Arc::new({
+                      let tx_safe: mpsc::Sender<StreamEvent> = tx.clone();
+                      move |chunk: Vec<u8>, flush: bool| {
+                        let _ = tx_safe.try_send(StreamEvent::BodyChunk { chunk, flush });
+                      }
+                    }));
+
+                    stream_lock.set_code(409);
+                    stream_lock.push_json(
+                      &serde_json::json!({
+                          "code": 409,
+                          "error": format!("{}", e)
+                      }),
+                      false,
+                    );
+                    stream_lock.end();
+                  }
+
+                  drop(tx);
+
+                  // ERROR WRITE TASK
+                  while let Ok(Some(StreamEvent::BodyChunk { chunk, flush })) =
+                    timeout(keep_alive, rx.recv()).await
+                  {
+                    if !chunk.is_empty() {
+                      if let Err(e) = writer.write_all(&chunk).await {
+                        disconnect(&on_disconnect, &last_ctx, &opts_conn).await;
+                        let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> =
+                          logger_conn.read().unwrap();
+                        logger_lock("warning", &format!("Client {:?}: Write error: {}", addr, e));
+                        return;
+                      }
+                    }
+
+                    if flush {
+                      if let Err(e) = writer.flush().await {
+                        disconnect(&on_disconnect, &last_ctx, &opts_conn).await;
+                        let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> =
+                          logger_conn.read().unwrap();
+                        logger_lock("warning", &format!("Client {:?}: Flush error: {}", addr, e));
+                        return;
+                      }
+
+                      let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> =
+                        logger_conn.read().unwrap();
+                      logger_lock("info", &format!("Client {:?}: Write task finished", addr));
+                      break;
+                    }
+                  }
+                }
+              },
+            }
+
+            if req.is_empty() {
+              break;
+            }
+          }
+        }
+      });
+    }
+
+    Err(e) => {
+      let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> = logger.read().unwrap();
+      logger_lock("warning", &format!("Acceptor error: {}", e));
+    }
+  }
+}
+
 pub struct Http1 {
-  cb_logger: Arc<Mutex<Arc<Http1Logger>>>,
-  handlers: Arc<Mutex<HashMap<String, Arc<Http1Handler>>>>,
+  cb_logger: Arc<RwLock<Arc<Http1Logger>>>,
+  handlers: Arc<RwLock<HashMap<String, Arc<Http1Handler>>>>,
   opts: Http1Opts,
   shutdown: Arc<Notify>,
 }
 
 impl Http1 {
   pub fn new(opts: Http1Opts) -> Self {
+    let handlers: Arc<RwLock<HashMap<String, Arc<Http1Handler>>>> =
+      Arc::new(RwLock::new(HashMap::new()));
+    {
+      let mut handlers_write: RwLockWriteGuard<'_, HashMap<String, Arc<Http1Handler>>> =
+        handlers.write().unwrap();
+      handlers_write.insert(
+        String::from("_"),
+        Arc::new(
+          move |_ctx: Arc<Mutex<Http1Ctx>>, stream: Arc<Mutex<Http1Stream>>| {
+            let mut stream_lock = stream.lock().unwrap();
+            stream_lock.set_code(404);
+            stream_lock.push_json(
+              &serde_json::json!({
+                "code": 404,
+                "error": "Not found."
+              }),
+              false,
+            );
+            stream_lock.end();
+          },
+        ),
+      );
+
+      handlers_write.insert(
+        String::from("_connect"),
+        Arc::new(move |_ctx: Arc<Mutex<Http1Ctx>>, _stream: Arc<Mutex<Http1Stream>>| {}),
+      );
+
+      handlers_write.insert(
+        String::from("_disconnect"),
+        Arc::new(move |_ctx: Arc<Mutex<Http1Ctx>>, _stream: Arc<Mutex<Http1Stream>>| {}),
+      );
+    }
+
     Self {
       opts,
-      cb_logger: Arc::new(Mutex::new(Arc::new(move |_level: &str, message: &str| {
+      cb_logger: Arc::new(RwLock::new(Arc::new(move |_level: &str, message: &str| {
         println!("[Arnelify Server]: {}", message);
       }))),
-      handlers: Arc::new(Mutex::new(HashMap::new())),
+      handlers,
       shutdown: Arc::new(Notify::new()),
     }
   }
 
-  async fn acceptor(
-    &self,
-    listener: &TcpListener,
-    logger_rt: Arc<Mutex<Arc<Http1Logger>>>,
-    handlers_rt: Arc<Mutex<HashMap<String, Arc<Http1Handler>>>>,
-    opts_rt: Arc<Http1Opts>,
-  ) -> () {
-    let keep_alive: Duration = Duration::from_secs((*opts_rt).keep_alive as u64);
-    match listener.accept().await {
-      Ok((socket, addr)) => {
-        let (mut reader, mut writer) = socket.into_split();
-        let (tx, mut rx) = mpsc::channel::<StreamEvent>(32);
-
-        let logger_accept: Arc<Mutex<Arc<Http1Logger>>> = Arc::clone(&logger_rt);
-        let handlers_accept: Arc<Mutex<HashMap<String, Arc<Http1Handler>>>> =
-          Arc::clone(&handlers_rt);
-        let opts_accept: Arc<Http1Opts> = Arc::clone(&opts_rt);
-
-        {
-          let logger_lock: std::sync::MutexGuard<'_, Arc<Http1Logger>> =
-            logger_accept.lock().unwrap();
-          (logger_lock)("success", &format!("New connection from {:?}", addr));
-        }
-
-        // WRITE TASK
-        tokio::spawn(async move {
-          while let Some(event) = rx.recv().await {
-            match event {
-              StreamEvent::BodyChunk { chunk, flush } => {
-                let _ = writer.write_all(&chunk).await;
-                if flush {
-                  writer.flush().await.unwrap();
-                }
-              }
-            }
-          }
-        });
-
-        // READ TASK
-        tokio::spawn(async move {
-          let block_size: usize = (*opts_accept).block_size_kb * 1024;
-          let mut buff: Vec<u8> = vec![0u8; block_size];
-          let mut req: Http1Req = Http1Req::new((*opts_accept).clone());
-          let stream: Arc<Mutex<Http1Stream>> =
-            Arc::new(Mutex::new(Http1Stream::new((*opts_accept).clone())));
-          {
-            let mut stream_lock: std::sync::MutexGuard<'_, Http1Stream> = stream.lock().unwrap();
-            stream_lock.on_send(Arc::new({
-              let tx: mpsc::Sender<StreamEvent> = tx.clone();
-              move |chunk: &[u8], flush: bool| {
-                let _ = tx.try_send(StreamEvent::BodyChunk {
-                  chunk: chunk.to_vec(),
-                  flush,
-                });
-              }
-            }));
-          }
-
-          loop {
-            match timeout(keep_alive, reader.read(&mut buff)).await {
-              Ok(Ok(bytes_read)) => {
-                if bytes_read == 0 {
-                  let logger_lock: std::sync::MutexGuard<'_, Arc<Http1Logger>> =
-                    logger_accept.lock().unwrap();
-                  logger_lock("success", &format!("Client {:?} disconnected", addr));
-                  break;
-                }
-
-                req.add(&buff[..bytes_read]);
-
-                loop {
-                  match req.read_block() {
-                    Ok(Some(_)) => {
-                      let path: String = req.get_path();
-                      let ctx_handler: Arc<Mutex<Http1Ctx>> = Arc::new(Mutex::new(req.get_ctx()));
-                      let stream_handler: Arc<Mutex<Http1Stream>> = Arc::clone(&stream);
-                      {
-                        let mut stream_lock: std::sync::MutexGuard<'_, Http1Stream> =
-                          stream.lock().unwrap();
-                        stream_lock.set_encoding((*opts_accept).charset.clone());
-                        stream_lock.set_compression(req.get_compression());
-                      };
-
-                      req.reset();
-                      let handler_opt: Option<Arc<Http1Handler>> = {
-                        let handlers_lock: std::sync::MutexGuard<
-                          '_,
-                          HashMap<String, Arc<Http1Handler>>,
-                        > = handlers_accept.lock().unwrap();
-                        handlers_lock.get(&path).cloned()
-                      };
-
-                      if let Some(handler) = handler_opt {
-                        handler(ctx_handler, stream_handler);
-
-                        let mut stream_lock: std::sync::MutexGuard<'_, Http1Stream> =
-                          stream.lock().unwrap();
-                        stream_lock.reset();
-                      } else {
-                        let mut stream_lock: std::sync::MutexGuard<'_, Http1Stream> =
-                          stream.lock().unwrap();
-                        stream_lock.set_code(404);
-                        stream_lock.push_json(
-                          &serde_json::json!({
-                            "code": 404,
-                            "error": "Not Found."
-                          }),
-                          false,
-                        );
-
-                        stream_lock.end();
-                      }
-                    }
-                    Ok(None) => {}
-                    Err(e) => match e.kind() {
-                      ErrorKind::InvalidData => {
-                        let logger_lock: std::sync::MutexGuard<'_, Arc<Http1Logger>> =
-                          logger_accept.lock().unwrap();
-                        logger_lock("warning", &format!("Block read error: {}", e));
-                        break;
-                      }
-                      _ => {
-                        let mut stream_lock: std::sync::MutexGuard<'_, Http1Stream> =
-                          stream.lock().unwrap();
-                        stream_lock.set_code(409);
-                        stream_lock.set_encoding((*opts_accept).charset.clone());
-                        stream_lock.push_json(
-                          &serde_json::json!({
-                            "code": 409,
-                            "error": format!("{}", e)
-                          }),
-                          false,
-                        );
-
-                        stream_lock.end();
-                      }
-                    },
-                  }
-
-                  if req.is_empty() {
-                    break;
-                  }
-                }
-              }
-              Ok(Err(e)) => {
-                let logger_lock: std::sync::MutexGuard<'_, Arc<Http1Logger>> =
-                  logger_accept.lock().unwrap();
-                logger_lock("warning", &format!("Socket read error: {}", e));
-                break;
-              }
-              Err(_) => {
-                let logger_lock: std::sync::MutexGuard<'_, Arc<Http1Logger>> =
-                  logger_accept.lock().unwrap();
-                logger_lock("success", &format!("Keep-Alive timeout for {:?}", addr));
-                break;
-              }
-            }
-          }
-        });
-      }
-      Err(e) => {
-        let logger_lock: std::sync::MutexGuard<'_, Arc<Http1Logger>> = logger_rt.lock().unwrap();
-        logger_lock("warning", &format!("Acceptor error: {}", e));
-      }
-    }
-  }
-
   pub fn logger(&self, cb: Arc<Http1Logger>) {
-    let mut logger_lock: std::sync::MutexGuard<'_, Arc<Http1Logger>> =
-      self.cb_logger.lock().unwrap();
-    *logger_lock = cb;
+    let mut logger_write: RwLockWriteGuard<'_, Arc<Http1Logger>> = self.cb_logger.write().unwrap();
+    *logger_write = cb;
   }
 
   pub fn on(&self, path: &str, cb: Arc<Http1Handler>) {
-    let mut map: std::sync::MutexGuard<'_, HashMap<String, Arc<Http1Handler>>> =
-      self.handlers.lock().unwrap();
-    map.insert(String::from(path), cb);
+    let mut handlers_write: RwLockWriteGuard<'_, HashMap<String, Arc<Http1Handler>>> =
+      self.handlers.write().unwrap();
+    handlers_write.insert(path.to_string(), cb);
   }
 
   pub fn start(&self) {
-    let logger_rt: Arc<Mutex<Arc<Http1Logger>>> = Arc::clone(&self.cb_logger);
-    let handlers_rt: Arc<Mutex<HashMap<String, Arc<Http1Handler>>>> = Arc::clone(&self.handlers);
+    let logger_rt: Arc<RwLock<Arc<Http1Logger>>> = Arc::clone(&self.cb_logger);
+    let handlers_rt: Arc<RwLock<HashMap<String, Arc<Http1Handler>>>> = Arc::clone(&self.handlers);
     let opts_rt: Arc<Http1Opts> = Arc::new(self.opts.clone());
     let shutdown_rt: Arc<Notify> = Arc::clone(&self.shutdown);
 
@@ -1845,7 +1987,7 @@ impl Http1 {
     rt.block_on(async move {
       let addr: (&str, u16) = ("0.0.0.0", (*opts_rt).port);
       let listener: TcpListener = TcpListener::bind(&addr).await.unwrap_or_else(|_: Error| {
-        let logger_lock: std::sync::MutexGuard<'_, Arc<Http1Logger>> = logger_rt.lock().unwrap();
+        let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> = logger_rt.read().unwrap();
         logger_lock(
           "error",
           &format!("Port {} already in use.", (*opts_rt).port),
@@ -1854,22 +1996,21 @@ impl Http1 {
       });
 
       {
-        let logger_lock: std::sync::MutexGuard<'_, Arc<Http1Logger>> = logger_rt.lock().unwrap();
+        let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> = logger_rt.read().unwrap();
         logger_lock("success", &format!("HTTP/1.1 on port {}", (*opts_rt).port));
       }
 
       loop {
         tokio::select! {
-            _ = shutdown_rt.notified() => {
-                break;
-            }
-
-            _ = self.acceptor(
-                &listener,
-                Arc::clone(&logger_rt),
-                Arc::clone(&handlers_rt),
-                Arc::clone(&opts_rt)
-            ) => {}
+          _ = shutdown_rt.notified() => {
+            break;
+          }
+          _ = acceptor(
+            &listener,
+            Arc::clone(&logger_rt),
+            Arc::clone(&handlers_rt),
+            Arc::clone(&opts_rt)
+          ) => {}
         }
       }
     });
