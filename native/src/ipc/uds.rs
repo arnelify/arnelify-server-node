@@ -25,7 +25,10 @@ use std::{
   io::{Error, ErrorKind},
   path::Path,
   process,
-  sync::{Arc, Mutex},
+  sync::{
+    Arc, Mutex, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard,
+    atomic::{AtomicU64, Ordering},
+  },
 };
 
 use tokio::{
@@ -37,11 +40,8 @@ use tokio::{
 
 pub type UnixDomainSocketBytes = Vec<u8>;
 pub type UnixDomainSocketCtx = serde_json::Value;
-pub type JSON = serde_json::Value;
 
-enum StreamEvent {
-  BodyChunk { chunk: Vec<u8>, flush: bool },
-}
+pub type JSON = serde_json::Value;
 
 #[derive(Clone, Default)]
 pub struct UnixDomainSocketOpts {
@@ -81,7 +81,10 @@ impl UnixDomainSocketReq {
       json_length: 0,
 
       topic: String::new(),
-      ctx: JSON::Null,
+      ctx: serde_json::json!({
+        "payload": {},
+        "topic": JSON::Null,
+      }),
     }
   }
 
@@ -186,8 +189,8 @@ impl UnixDomainSocketReq {
       };
 
       match json["topic"].as_str() {
-        Some(s) => {
-          self.topic = String::from(s);
+        Some(v) => {
+          self.topic = String::from(v);
         }
         None => {
           return Err(Error::new(ErrorKind::InvalidInput, "Invalid message."));
@@ -199,7 +202,6 @@ impl UnixDomainSocketReq {
       }
 
       self.ctx = json["payload"].clone();
-
       self.buff.drain(..self.json_length);
       if self.binary_length == 0 {
         self.has_body = true;
@@ -241,8 +243,8 @@ impl UnixDomainSocketReq {
 
     self.topic.clear();
     self.ctx = serde_json::json!({
+      "payload": {},
       "topic": JSON::Null,
-      "payload": {}
     });
   }
 }
@@ -250,15 +252,18 @@ impl UnixDomainSocketReq {
 pub struct UnixDomainSocketStream {
   _opts: UnixDomainSocketOpts,
   cb_send: Arc<dyn Fn(Vec<u8>, bool) + Send + Sync>,
+  topic: String,
 }
 
 impl UnixDomainSocketStream {
   pub fn new(_opts: UnixDomainSocketOpts) -> Self {
     Self {
       _opts,
-      cb_send: Arc::new(|chunk: Vec<u8>, _flush: bool| {
-        println!("{:?}", chunk);
+      cb_send: Arc::new(|chunk: Vec<u8>, flush: bool| {
+        println!("chunk: {:?}", chunk);
+        println!("flush: {:?}", flush);
       }),
+      topic: String::new(),
     }
   }
 
@@ -266,208 +271,256 @@ impl UnixDomainSocketStream {
     self.cb_send = cb;
   }
 
-  pub fn push(&mut self, topic: &str, payload: &JSON, bytes: &[u8], flush: bool) -> () {
-    let json: JSON = serde_json::json!({
-        "topic": topic,
-        "payload": payload
+  pub fn _push(&mut self, payload: &JSON, bytes: &[u8], flush: bool) -> () {
+    let ctx: UnixDomainSocketCtx = serde_json::json!({
+      "payload": payload,
+      "topic": self.topic
     });
 
     let mut buff: Vec<u8> = Vec::new();
-    let message: String = serde_json::to_string(&json).unwrap();
-    let meta: String = format!("{}+{}:", message.len(), bytes.len());
+    let json: String = serde_json::to_string(&ctx).unwrap();
+    let meta: String = format!("{}+{}:", json.len(), bytes.len());
     buff.extend_from_slice(meta.as_bytes());
-    buff.extend_from_slice(message.as_bytes());
+    buff.extend_from_slice(json.as_bytes());
     buff.extend_from_slice(bytes);
 
     (self.cb_send)(buff, flush);
   }
+
+  pub fn set_topic(&mut self, topic: &str) -> () {
+    self.topic = String::from(topic);
+  }
 }
 
 pub type UnixDomainSocketLogger = dyn Fn(&str, &str) + Send + Sync;
-pub type UnixDomainSocketHandler =
-  dyn Fn(Arc<Mutex<UnixDomainSocketCtx>>, Arc<Mutex<UnixDomainSocketBytes>>) + Send + Sync;
+pub type UnixDomainSocketHandler = dyn Fn(
+    Arc<Mutex<UnixDomainSocketCtx>>,
+    Arc<Mutex<UnixDomainSocketBytes>>,
+    Arc<Mutex<UnixDomainSocketStream>>,
+  ) + Send
+  + Sync;
+
+static UDS_STREAM_ID: AtomicU64 = AtomicU64::new(1);
+static UDS_STREAMS: OnceLock<Arc<RwLock<HashMap<u64, Arc<mpsc::Sender<(Vec<u8>, bool)>>>>>> =
+  OnceLock::new();
+
+async fn acceptor(
+  id_rt: u64,
+  listener: &UnixListener,
+  logger_rt: Arc<RwLock<Arc<UnixDomainSocketLogger>>>,
+  handlers_rt: Arc<RwLock<HashMap<String, Arc<UnixDomainSocketHandler>>>>,
+  opts_rt: Arc<UnixDomainSocketOpts>,
+) -> () {
+  match listener.accept().await {
+    Ok((socket, _addr)) => {
+      let (mut reader, mut writer) = socket.into_split();
+
+      let logger_accept: Arc<RwLock<Arc<UnixDomainSocketLogger>>> = Arc::clone(&logger_rt);
+      let handlers_accept: Arc<RwLock<HashMap<String, Arc<UnixDomainSocketHandler>>>> =
+        Arc::clone(&handlers_rt);
+      let opts_accept: Arc<UnixDomainSocketOpts> = Arc::clone(&opts_rt);
+
+      let (tx, mut rx) = mpsc::channel::<(Vec<u8>, bool)>(2048);
+      let tx_safe: Arc<mpsc::Sender<(Vec<u8>, bool)>> = Arc::new(tx);
+      {
+        let mut stream: RwLockWriteGuard<'_, HashMap<u64, Arc<mpsc::Sender<(Vec<u8>, bool)>>>> =
+          UDS_STREAMS
+            .get_or_init(|| Arc::new(RwLock::new(HashMap::new())))
+            .write()
+            .unwrap();
+
+        stream.insert(id_rt, Arc::clone(&tx_safe));
+      }
+
+      // WRITE TASK
+      tokio::spawn(async move {
+        while let Some(event) = rx.recv().await {
+          let (chunk, flush) = event;
+          let _ = writer.write_all(&chunk).await;
+          if flush {
+            writer.flush().await.unwrap();
+          }
+        }
+      });
+
+      // READ TASK
+      tokio::spawn(async move {
+        let block_size: usize = opts_accept.block_size_kb * 1024;
+        let mut buff: Vec<u8> = vec![0u8; block_size];
+        let mut req: UnixDomainSocketReq = UnixDomainSocketReq::new((*opts_accept).clone());
+
+        loop {
+          match reader.read(&mut buff).await {
+            Ok(bytes_read) => {
+              if bytes_read == 0 {
+                let logger_lock: RwLockReadGuard<'_, Arc<UnixDomainSocketLogger>> =
+                  logger_accept.read().unwrap();
+                logger_lock("warning", &format!("Client disconnected."));
+                break;
+              }
+
+              req.add(&buff[..bytes_read]);
+
+              loop {
+                match req.read_block() {
+                  Ok(Some(_)) => {
+                    let topic: String = req.get_topic();
+                    let ctx_handler: Arc<Mutex<UnixDomainSocketCtx>> =
+                      Arc::new(Mutex::new(req.get_ctx()));
+                    let bytes_handler: Arc<Mutex<UnixDomainSocketBytes>> =
+                      Arc::new(Mutex::new(req.get_bytes().to_vec()));
+                    let stream: Arc<Mutex<UnixDomainSocketStream>> = Arc::new(Mutex::new(
+                      UnixDomainSocketStream::new((*opts_accept).clone()),
+                    ));
+                    {
+                      let mut stream_lock: std::sync::MutexGuard<'_, UnixDomainSocketStream> =
+                        stream.lock().unwrap();
+                      stream_lock.set_topic(&req.get_topic());
+                      stream_lock.on_send(Arc::new({
+                        let tx_safe: Arc<mpsc::Sender<(Vec<u8>, bool)>> = Arc::clone(&tx_safe);
+                        move |chunk: Vec<u8>, flush: bool| {
+                          let _ = tx_safe.try_send((chunk, flush));
+                        }
+                      }));
+                    }
+                    req.reset();
+
+                    let handler_opt: Option<Arc<UnixDomainSocketHandler>> = {
+                      let handlers_lock: RwLockReadGuard<
+                        '_,
+                        HashMap<String, Arc<UnixDomainSocketHandler>>,
+                      > = handlers_accept.read().unwrap();
+                      handlers_lock.get(&topic).cloned()
+                    };
+
+                    if let Some(handler) = handler_opt {
+                      handler(ctx_handler, bytes_handler, stream);
+                    }
+                  }
+                  Ok(None) => {}
+                  Err(_) => {
+                    let logger_lock: RwLockReadGuard<'_, Arc<UnixDomainSocketLogger>> =
+                      logger_accept.read().unwrap();
+                    logger_lock("error", &format!("Block read error."));
+                    process::exit(1);
+                  }
+                }
+
+                if req.is_empty() {
+                  break;
+                }
+              }
+            }
+            Err(_) => {
+              let logger_lock: RwLockReadGuard<'_, Arc<UnixDomainSocketLogger>> =
+                logger_accept.read().unwrap();
+              logger_lock("error", &format!("Socket read error."));
+              break;
+            }
+          }
+        }
+      });
+    }
+    Err(e) => {
+      let logger_lock: RwLockReadGuard<'_, Arc<UnixDomainSocketLogger>> = logger_rt.read().unwrap();
+      logger_lock("danger", &format!("Acceptor error: {}", e));
+    }
+  }
+}
 
 pub struct UnixDomainSocket {
+  id: u64,
   opts: UnixDomainSocketOpts,
-  cb_logger: Arc<Mutex<Arc<UnixDomainSocketLogger>>>,
-  handlers: Arc<Mutex<HashMap<String, Arc<UnixDomainSocketHandler>>>>,
-  stream: Arc<Mutex<Option<Arc<Mutex<UnixDomainSocketStream>>>>>,
+  rt: Arc<Runtime>,
+  cb_logger: Arc<RwLock<Arc<UnixDomainSocketLogger>>>,
+  handlers: Arc<RwLock<HashMap<String, Arc<UnixDomainSocketHandler>>>>,
   shutdown: Arc<Notify>,
 }
 
 impl UnixDomainSocket {
   pub fn new(opts: UnixDomainSocketOpts) -> Self {
+    let id: u64 = UDS_STREAM_ID.fetch_add(1, Ordering::Relaxed);
+    let rt: Arc<Runtime> = Arc::new(
+      Builder::new_multi_thread()
+        .worker_threads(opts.thread_limit as usize)
+        .enable_all()
+        .build()
+        .unwrap(),
+    );
+
     Self {
+      id,
       opts,
-      cb_logger: Arc::new(Mutex::new(Arc::new(move |_level: &str, message: &str| {
+      rt,
+      cb_logger: Arc::new(RwLock::new(Arc::new(move |_level: &str, message: &str| {
         println!("[Arnelify Server]: {}", message);
       }))),
-      handlers: Arc::new(Mutex::new(HashMap::new())),
-      stream: Arc::new(Mutex::new(None)),
+      handlers: Arc::new(RwLock::new(HashMap::new())),
       shutdown: Arc::new(Notify::new()),
     }
   }
 
-  async fn acceptor(
-    &self,
-    listener: &UnixListener,
-    logger_rt: Arc<Mutex<Arc<UnixDomainSocketLogger>>>,
-    handlers_rt: Arc<Mutex<HashMap<String, Arc<UnixDomainSocketHandler>>>>,
-    opts_rt: Arc<UnixDomainSocketOpts>,
-  ) -> () {
-    match listener.accept().await {
-      Ok((socket, _addr)) => {
-        let (mut reader, mut writer) = socket.into_split();
-
-        let logger_accept: Arc<Mutex<Arc<UnixDomainSocketLogger>>> = Arc::clone(&logger_rt);
-        let handlers_accept: Arc<Mutex<HashMap<String, Arc<UnixDomainSocketHandler>>>> =
-          Arc::clone(&handlers_rt);
-        let opts_accept: Arc<UnixDomainSocketOpts> = Arc::clone(&opts_rt);
-
-        let (tx, mut rx) = mpsc::channel::<StreamEvent>(32);
-        let stream: Arc<Mutex<UnixDomainSocketStream>> = Arc::new(Mutex::new(
-          UnixDomainSocketStream::new((*opts_accept).clone()),
-        ));
-
-        {
-          let mut stream_lock: std::sync::MutexGuard<'_, UnixDomainSocketStream> =
-            stream.lock().unwrap();
-          stream_lock.on_send(Arc::new({
-            let tx: mpsc::Sender<StreamEvent> = tx.clone();
-            move |chunk: Vec<u8>, flush: bool| {
-              let _ = tx.try_send(StreamEvent::BodyChunk { chunk, flush });
-            }
-          }));
-        }
-
-        {
-          let mut stream_lock: std::sync::MutexGuard<
-            '_,
-            Option<Arc<Mutex<UnixDomainSocketStream>>>,
-          > = self.stream.lock().unwrap();
-          *stream_lock = Some(stream.clone());
-        }
-
-        // WRITE TASK
-        tokio::spawn(async move {
-          while let Some(event) = rx.recv().await {
-            match event {
-              StreamEvent::BodyChunk { chunk, flush } => {
-                let _ = writer.write_all(&chunk).await;
-                if flush {
-                  writer.flush().await.unwrap();
-                }
-              }
-            }
-          }
-        });
-
-        // READ TASK
-        tokio::spawn(async move {
-          let block_size: usize = opts_accept.block_size_kb * 1024;
-          let mut buff: Vec<u8> = vec![0u8; block_size];
-          let mut req: UnixDomainSocketReq = UnixDomainSocketReq::new((*opts_accept).clone());
-
-          loop {
-            match reader.read(&mut buff).await {
-              Ok(bytes_read) => {
-                if bytes_read == 0 {
-                  let logger_lock: std::sync::MutexGuard<'_, Arc<UnixDomainSocketLogger>> =
-                    logger_accept.lock().unwrap();
-                  logger_lock("warning", &format!("Client disconnected."));
-                  break;
-                }
-
-                req.add(&buff[..bytes_read]);
-
-                loop {
-                  match req.read_block() {
-                    Ok(Some(_)) => {
-                      let topic: String = req.get_topic();
-                      let ctx_handler: Arc<Mutex<UnixDomainSocketCtx>> =
-                        Arc::new(Mutex::new(req.get_ctx()));
-                      let bytes_handler: Arc<Mutex<UnixDomainSocketBytes>> =
-                        Arc::new(Mutex::new(req.get_bytes().to_vec()));
-
-                      req.reset();
-                      let handler_opt: Option<Arc<UnixDomainSocketHandler>> = {
-                        let handlers_lock: std::sync::MutexGuard<
-                          '_,
-                          HashMap<String, Arc<UnixDomainSocketHandler>>,
-                        > = handlers_accept.lock().unwrap();
-                        handlers_lock.get(&topic).cloned()
-                      };
-
-                      if let Some(handler) = handler_opt {
-                        handler(ctx_handler, bytes_handler);
-                      }
-                    }
-                    Ok(None) => {}
-                    Err(_) => {
-                      let logger_lock: std::sync::MutexGuard<'_, Arc<UnixDomainSocketLogger>> =
-                        logger_accept.lock().unwrap();
-                      logger_lock("error", &format!("Block read error."));
-                      process::exit(1);
-                    }
-                  }
-
-                  if req.is_empty() {
-                    break;
-                  }
-                }
-              }
-              Err(_) => {
-                let logger_lock: std::sync::MutexGuard<'_, Arc<UnixDomainSocketLogger>> =
-                  logger_accept.lock().unwrap();
-                logger_lock("error", &format!("Socket read error."));
-                break;
-              }
-            }
-          }
-        });
-      }
-      Err(e) => {
-        let logger_lock: std::sync::MutexGuard<'_, Arc<UnixDomainSocketLogger>> =
-          logger_rt.lock().unwrap();
-        logger_lock("danger", &format!("Acceptor error: {}", e));
-      }
-    }
-  }
-
-  pub fn _logger(&self, cb: Arc<UnixDomainSocketLogger>) -> () {
-    let mut logger_lock: std::sync::MutexGuard<'_, Arc<UnixDomainSocketLogger>> =
-      self.cb_logger.lock().unwrap();
+  pub fn logger(&self, cb: Arc<UnixDomainSocketLogger>) -> () {
+    let mut logger_lock: RwLockWriteGuard<'_, Arc<UnixDomainSocketLogger>> =
+      self.cb_logger.write().unwrap();
     *logger_lock = cb;
   }
 
-  pub fn on(&mut self, topic: &str, cb: Arc<UnixDomainSocketHandler>) -> () {
-    let mut map: std::sync::MutexGuard<'_, HashMap<String, Arc<UnixDomainSocketHandler>>> =
-      self.handlers.lock().unwrap();
-    map.insert(String::from(topic), cb);
+  pub fn on(&self, topic: &str, cb: Arc<UnixDomainSocketHandler>) {
+    let mut map: RwLockWriteGuard<'_, HashMap<String, Arc<UnixDomainSocketHandler>>> =
+      self.handlers.write().unwrap();
+    map.insert(topic.to_string(), cb);
   }
 
-  pub fn push(&self, topic: &str, payload: &JSON, bytes: UnixDomainSocketBytes, flush: bool) -> () {
-    let lock: std::sync::MutexGuard<'_, Option<Arc<Mutex<UnixDomainSocketStream>>>> =
-      self.stream.lock().unwrap();
-    if let Some(stream) = &*lock {
-      let mut stream_lock = stream.lock().unwrap();
-      stream_lock.push(&topic, &payload, &bytes, flush);
+  pub fn send(&self, topic: &str, payload: &JSON, bytes: UnixDomainSocketBytes, flush: bool) -> () {
+    let ctx: UnixDomainSocketCtx = serde_json::json!({
+      "payload": payload,
+      "topic": topic,
+    });
+
+    let mut buff: Vec<u8> = Vec::new();
+    let json: String = serde_json::to_string(&ctx).unwrap();
+    let meta: String = format!("{}+{}:", json.len(), bytes.len());
+    buff.extend_from_slice(meta.as_bytes());
+    buff.extend_from_slice(json.as_bytes());
+    buff.extend_from_slice(&bytes);
+
+    // WRITE TASK
+    if let Some(map) = UDS_STREAMS.get() {
+      let stream: Option<Arc<mpsc::Sender<(Vec<u8>, bool)>>> = {
+        let streams: RwLockReadGuard<'_, HashMap<u64, Arc<mpsc::Sender<(Vec<u8>, bool)>>>> =
+          map.read().unwrap();
+        streams.get(&self.id).cloned()
+      };
+
+      match stream {
+        Some(tx_req) => {
+          let _ = tx_req.try_send((buff, flush));
+        }
+        None => {
+          let logger_lock: RwLockReadGuard<'_, Arc<UnixDomainSocketLogger>> =
+            self.cb_logger.read().unwrap();
+          logger_lock("error", "Send called before start");
+          process::exit(1);
+        }
+      }
     }
   }
 
   pub fn start(&self, on_start: Arc<dyn Fn() + Send + Sync>) -> () {
-    let logger_rt: Arc<Mutex<Arc<UnixDomainSocketLogger>>> = Arc::clone(&self.cb_logger);
-    let handlers_rt: Arc<Mutex<HashMap<String, Arc<UnixDomainSocketHandler>>>> =
-      Arc::clone(&self.handlers);
+    let id_rt: u64 = self.id;
     let opts_rt: Arc<UnixDomainSocketOpts> = Arc::new(self.opts.clone());
+    let logger_rt: Arc<RwLock<Arc<UnixDomainSocketLogger>>> = Arc::clone(&self.cb_logger);
+    let handlers_rt: Arc<RwLock<HashMap<String, Arc<UnixDomainSocketHandler>>>> =
+      Arc::clone(&self.handlers);
     let shutdown_rt: Arc<Notify> = Arc::clone(&self.shutdown);
 
     if Path::new(&opts_rt.socket_path).exists() {
       match std::fs::remove_file(&opts_rt.socket_path) {
         Ok(_) => {}
         Err(_) => {
-          let logger_lock: std::sync::MutexGuard<'_, Arc<UnixDomainSocketLogger>> =
-            logger_rt.lock().unwrap();
+          let logger_lock: RwLockReadGuard<'_, Arc<UnixDomainSocketLogger>> =
+            logger_rt.read().unwrap();
           logger_lock(
             "error",
             &format!("Error in Unix Domain Socket: Socket open error."),
@@ -477,18 +530,12 @@ impl UnixDomainSocket {
       }
     }
 
-    let rt: Runtime = Builder::new_multi_thread()
-      .worker_threads(self.opts.thread_limit as usize)
-      .enable_all()
-      .build()
-      .unwrap();
-
-    rt.block_on(async move {
+    self.rt.block_on(async move {
       let listener: UnixListener = match UnixListener::bind(&opts_rt.socket_path) {
         Ok(v) => v,
         Err(_) => {
-          let logger_lock: std::sync::MutexGuard<'_, Arc<UnixDomainSocketLogger>> =
-            logger_rt.lock().unwrap();
+          let logger_lock: RwLockReadGuard<'_, Arc<UnixDomainSocketLogger>> =
+            logger_rt.read().unwrap();
           logger_lock(
             "warning",
             &format!("Error in Unix Domain Socket: Socket bind error."),
@@ -504,7 +551,8 @@ impl UnixDomainSocket {
           _ = shutdown_rt.notified() => {
             break;
           }
-          _ = self.acceptor(
+          _ = acceptor(
+            id_rt,
             &listener,
             Arc::clone(&logger_rt),
             Arc::clone(&handlers_rt),

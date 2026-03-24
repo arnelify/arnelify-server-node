@@ -1,3 +1,4 @@
+import net from "net";
 type UnixDomainSocketBytes = Buffer;
 interface UnixDomainSocketOpts {
     block_size_kb: number;
@@ -5,23 +6,20 @@ interface UnixDomainSocketOpts {
     thread_limit: number;
 }
 type UnixDomainSocketCtx = any[];
-type UnixDomainSocketRes = {
-    [key: string]: any;
-};
 declare class UnixDomainSocketStream {
     opts: UnixDomainSocketOpts;
     topic: null | string;
     cb_send: (bytes: Buffer) => Promise<void>;
     constructor(opts: UnixDomainSocketOpts);
     on_send(cb: (bytes: Buffer) => Promise<void>): void;
-    push(payload: UnixDomainSocketRes, bytes: Buffer): Promise<void>;
+    push(payload: Record<string, any>, bytes: Buffer): Promise<void>;
     set_topic(topic: string): void;
 }
 type UnixDomainSocketHandler = (ctx: UnixDomainSocketCtx, bytes: UnixDomainSocketBytes) => Promise<void>;
 type UnixDomainSocketLogger = (level: string, message: string) => Promise<void>;
 declare class UnixDomainSocket {
     opts: UnixDomainSocketOpts;
-    client: any;
+    client: net.Socket | null;
     cb_handlers: Record<string, UnixDomainSocketHandler>;
     cb_logger: (_level: string, message: string) => Promise<void>;
     constructor(opts: UnixDomainSocketOpts);
@@ -31,6 +29,6 @@ declare class UnixDomainSocket {
     start(): Promise<void>;
     stop(): Promise<void>;
 }
-export type { UnixDomainSocketBytes, UnixDomainSocketCtx, UnixDomainSocketHandler, UnixDomainSocketLogger, UnixDomainSocketOpts, UnixDomainSocketRes, };
-export { UnixDomainSocket, UnixDomainSocketStream, };
+export type { UnixDomainSocketBytes, UnixDomainSocketCtx, UnixDomainSocketHandler, UnixDomainSocketLogger, UnixDomainSocketOpts, };
+export { UnixDomainSocket, UnixDomainSocketStream };
 //# sourceMappingURL=index.d.ts.map

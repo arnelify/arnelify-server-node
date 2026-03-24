@@ -41,7 +41,7 @@ use tcp2::{
 
 use ipc::{
   UnixDomainSocket, UnixDomainSocketBytes, UnixDomainSocketCtx, UnixDomainSocketHandler,
-  UnixDomainSocketOpts,
+  UnixDomainSocketOpts, UnixDomainSocketStream,
 };
 
 use std::{
@@ -51,10 +51,9 @@ use std::{
     Arc, Mutex, MutexGuard, OnceLock,
     atomic::{AtomicU64, Ordering},
     mpsc,
-    mpsc::RecvTimeoutError,
   },
   thread,
-  time::Duration,
+  time::{SystemTime, UNIX_EPOCH},
 };
 
 type JSON = serde_json::Value;
@@ -151,6 +150,13 @@ fn get_bool(opts: &JSON, key: &str) -> bool {
   ))
 }
 
+pub fn generate_request_id() -> u128 {
+  SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .expect("Time went backwards")
+    .as_nanos()
+}
+
 fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   let js_opts = cx.argument::<JsString>(0)?.value(&mut cx);
   let opts: JSON = match serde_json::from_str(&js_opts) {
@@ -175,7 +181,10 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   };
 
   let uds_http1_add_header: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -185,14 +194,15 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let value: String = v[2].as_str().unwrap_or("").to_string();
 
           if let Some(map) = HTTP1_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<Http1Stream>>, mpsc::Sender<u8>)> = {
+            let http1_stream: Option<(Arc<Mutex<Http1Stream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, Http1Streams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, Http1Stream> = stream_arc.lock().unwrap();
+            match http1_stream {
+              Some((http1_stream_safe, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, Http1Stream> =
+                  http1_stream_safe.lock().unwrap();
                 stream_lock.add_header(&key, &value);
               }
               None => {
@@ -203,7 +213,7 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = HTTP1_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("http1_logger", &args, Vec::new(), true);
+                    uds.send("http1_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -216,21 +226,25 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_http1_end: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
         Some(v) => {
           let stream_id: u64 = v[0].as_u64().unwrap_or(0);
           if let Some(map) = HTTP1_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<Http1Stream>>, mpsc::Sender<u8>)> = {
+            let http1_stream: Option<(Arc<Mutex<Http1Stream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, Http1Streams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, tx)) => {
-                let mut stream_lock: MutexGuard<'_, Http1Stream> = stream_arc.lock().unwrap();
+            match http1_stream {
+              Some((http1_stream_safe, tx)) => {
+                let mut stream_lock: MutexGuard<'_, Http1Stream> =
+                  http1_stream_safe.lock().unwrap();
                 stream_lock.end();
                 let _ = tx.send(1);
               }
@@ -240,7 +254,7 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = HTTP1_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("http1_logger", &args, Vec::new(), true);
+                    uds.send("http1_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -253,7 +267,10 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_http1_push_bytes: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -263,14 +280,15 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let bytes: Vec<u8> = bytes.lock().unwrap().clone();
 
           if let Some(map) = HTTP1_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<Http1Stream>>, mpsc::Sender<u8>)> = {
+            let http1_stream: Option<(Arc<Mutex<Http1Stream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, Http1Streams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, Http1Stream> = stream_arc.lock().unwrap();
+            match http1_stream {
+              Some((http1_stream_safe, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, Http1Stream> =
+                  http1_stream_safe.lock().unwrap();
                 stream_lock.push_bytes(&bytes, is_attachment);
               }
               None => {
@@ -281,7 +299,7 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = HTTP1_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("http1_logger", &args, Vec::new(), true);
+                    uds.send("http1_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -294,7 +312,10 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_http1_push_file: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -304,14 +325,15 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let is_attachment: bool = v[2].as_u64().unwrap_or(0) != 0;
 
           if let Some(map) = HTTP1_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<Http1Stream>>, mpsc::Sender<u8>)> = {
+            let http1_stream: Option<(Arc<Mutex<Http1Stream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, Http1Streams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, Http1Stream> = stream_arc.lock().unwrap();
+            match http1_stream {
+              Some((http1_stream_safe, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, Http1Stream> =
+                  http1_stream_safe.lock().unwrap();
                 stream_lock.push_file(&file_path, is_attachment);
               }
               None => {
@@ -322,7 +344,7 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = HTTP1_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("http1_logger", &args, Vec::new(), true);
+                    uds.send("http1_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -335,7 +357,10 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_http1_push_json: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -345,14 +370,15 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let is_attachment: bool = v[2].as_u64().unwrap_or(0) != 0;
 
           if let Some(map) = HTTP1_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<Http1Stream>>, mpsc::Sender<u8>)> = {
+            let http1_stream: Option<(Arc<Mutex<Http1Stream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, Http1Streams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, Http1Stream> = stream_arc.lock().unwrap();
+            match http1_stream {
+              Some((http1_stream_safe, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, Http1Stream> =
+                  http1_stream_safe.lock().unwrap();
                 stream_lock.push_json(&json, is_attachment);
               }
               None => {
@@ -363,7 +389,7 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = HTTP1_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("http1_logger", &args, Vec::new(), true);
+                    uds.send("http1_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -376,7 +402,10 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_http1_set_code: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -385,14 +414,15 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let code: u64 = v[1].as_u64().unwrap_or(0);
 
           if let Some(map) = HTTP1_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<Http1Stream>>, mpsc::Sender<u8>)> = {
+            let http1_stream: Option<(Arc<Mutex<Http1Stream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, Http1Streams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, Http1Stream> = stream_arc.lock().unwrap();
+            match http1_stream {
+              Some((http1_stream_safe, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, Http1Stream> =
+                  http1_stream_safe.lock().unwrap();
                 stream_lock.set_code(code as u16);
               }
               None => {
@@ -403,7 +433,7 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = HTTP1_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("http1_logger", &args, Vec::new(), true);
+                    uds.send("http1_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -416,7 +446,10 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_http1_set_compression: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -425,14 +458,15 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let compression: &str = v[1].as_str().unwrap_or("");
 
           if let Some(map) = HTTP1_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<Http1Stream>>, mpsc::Sender<u8>)> = {
+            let http1_stream: Option<(Arc<Mutex<Http1Stream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, Http1Streams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, Http1Stream> = stream_arc.lock().unwrap();
+            match http1_stream {
+              Some((http1_stream_safe, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, Http1Stream> =
+                  http1_stream_safe.lock().unwrap();
                 if compression.len() > 0 {
                   stream_lock.set_compression(Some(String::from(compression)));
                   return;
@@ -448,7 +482,7 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = HTTP1_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("http1_logger", &args, Vec::new(), true);
+                    uds.send("http1_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -461,7 +495,10 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_http1_set_headers: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -482,14 +519,15 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           }
 
           if let Some(map) = HTTP1_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<Http1Stream>>, mpsc::Sender<u8>)> = {
+            let http1_stream: Option<(Arc<Mutex<Http1Stream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, Http1Streams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, Http1Stream> = stream_arc.lock().unwrap();
+            match http1_stream {
+              Some((http1_stream_safe, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, Http1Stream> =
+                  http1_stream_safe.lock().unwrap();
                 stream_lock.set_headers(headers);
               }
               None => {
@@ -500,7 +538,7 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = HTTP1_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("http1_logger", &args, Vec::new(), true);
+                    uds.send("http1_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -512,7 +550,7 @@ fn http1_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
     },
   );
 
-  let mut uds: UnixDomainSocket = UnixDomainSocket::new(uds_opts);
+  let uds: UnixDomainSocket = UnixDomainSocket::new(uds_opts);
   uds.on("http1_add_header", uds_http1_add_header);
   uds.on("http1_end", uds_http1_end);
   uds.on("http1_push_bytes", uds_http1_push_bytes);
@@ -583,14 +621,20 @@ fn http1_logger(mut cx: FunctionContext) -> JsResult<JsUndefined> {
 
     if let Some(map) = HTTP1_UDS_MAP.get() {
       if let Some(uds) = map.lock().unwrap().get(&id) {
-        uds.push("http1_logger", &args, bytes, true);
+        uds.send("http1_logger", &args, bytes, true);
       }
     }
   });
 
+  if let Some(map) = HTTP1_UDS_MAP.get() {
+    if let Some(uds) = map.lock().unwrap().get(&id) {
+      uds.logger(Arc::clone(&http1_logger));
+    }
+  }
+
   if let Some(map) = HTTP1_MAP.get() {
     if let Some(http1) = map.lock().unwrap().get(&id) {
-      http1.logger(http1_logger);
+      http1.logger(Arc::clone(&http1_logger));
     }
   }
 
@@ -605,8 +649,8 @@ fn http1_on(mut cx: FunctionContext) -> JsResult<JsUndefined> {
   let path_safe: String = path.clone();
   let http1_handler: Arc<Http1Handler> = Arc::new(
     move |ctx: Arc<Mutex<Http1Ctx>>, stream: Arc<Mutex<Http1Stream>>| -> () {
-      let (tx, rx) = mpsc::channel::<u8>();
       let stream_id: u64 = HTTP1_STREAM_ID.fetch_add(1, Ordering::Relaxed);
+      let (tx, rx) = mpsc::channel::<u8>();
 
       HTTP1_STREAMS
         .get_or_init(|| Mutex::new(HashMap::new()))
@@ -614,50 +658,19 @@ fn http1_on(mut cx: FunctionContext) -> JsResult<JsUndefined> {
         .unwrap()
         .insert(stream_id, (stream, tx));
 
-      let ctx: Http1Ctx = {
-        let ctx_lock: std::sync::MutexGuard<'_, Http1Ctx> = ctx.lock().unwrap();
-        ctx_lock.clone()
-      };
-
+      let ctx: Http1Ctx = ctx.lock().unwrap().clone();
       let args: JSON = serde_json::json!([stream_id, path_safe, ctx]);
       let bytes: UnixDomainSocketBytes = Vec::new();
 
       if let Some(map) = HTTP1_UDS_MAP.get() {
         if let Some(uds) = map.lock().unwrap().get(&id) {
-          uds.push("http1_on", &args, bytes, true);
+          uds.send("http1_on", &args, bytes, true);
         }
       }
 
-      loop {
-        match rx.recv_timeout(Duration::from_secs(90)) {
-          Ok(val) => {
-            if val == 1 {
-              break;
-            }
-          }
-          Err(RecvTimeoutError::Timeout) => {
-            let args: JSON =
-              serde_json::json!(["error", "NEON error in http1_on: Stream response timeout."]);
-            if let Some(map) = HTTP1_UDS_MAP.get() {
-              if let Some(uds) = map.lock().unwrap().get(&id) {
-                uds.push("http1_logger", &args, Vec::new(), true);
-              }
-            }
-            break;
-          }
-          Err(RecvTimeoutError::Disconnected) => {
-            let args: JSON = serde_json::json!([
-              "error",
-              "NEON error in http1_on: Stream channel disconnected."
-            ]);
-            if let Some(map) = HTTP1_UDS_MAP.get() {
-              if let Some(uds) = map.lock().unwrap().get(&id) {
-                uds.push("http1_logger", &args, Vec::new(), true);
-              }
-            }
-
-            break;
-          }
+      while let Ok(v) = rx.recv() {
+        if v == 1 {
+          break;
         }
       }
 
@@ -763,7 +776,10 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   };
 
   let uds_http2_add_header: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -773,14 +789,15 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let value: String = v[2].as_str().unwrap_or("").to_string();
 
           if let Some(map) = HTTP2_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<Http2Stream>>, mpsc::Sender<u8>)> = {
+            let http2_stream: Option<(Arc<Mutex<Http2Stream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, Http2Streams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, Http2Stream> = stream_arc.lock().unwrap();
+            match http2_stream {
+              Some((http2_stream_safe, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, Http2Stream> =
+                  http2_stream_safe.lock().unwrap();
                 stream_lock.add_header(&key, &value);
               }
               None => {
@@ -791,7 +808,7 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = HTTP2_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("http2_logger", &args, Vec::new(), true);
+                    uds.send("http2_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -804,21 +821,25 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_http2_end: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
         Some(v) => {
           let stream_id: u64 = v[0].as_u64().unwrap_or(0);
           if let Some(map) = HTTP2_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<Http2Stream>>, mpsc::Sender<u8>)> = {
+            let http2_stream: Option<(Arc<Mutex<Http2Stream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, Http2Streams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, tx)) => {
-                let mut stream_lock: MutexGuard<'_, Http2Stream> = stream_arc.lock().unwrap();
+            match http2_stream {
+              Some((http2_stream_safe, tx)) => {
+                let mut stream_lock: MutexGuard<'_, Http2Stream> =
+                  http2_stream_safe.lock().unwrap();
                 stream_lock.end();
                 let _ = tx.send(1);
               }
@@ -828,7 +849,7 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = HTTP2_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("http2_logger", &args, Vec::new(), true);
+                    uds.send("http2_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -841,7 +862,10 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_http2_push_bytes: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -851,14 +875,15 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let bytes: Vec<u8> = bytes.lock().unwrap().clone();
 
           if let Some(map) = HTTP2_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<Http2Stream>>, mpsc::Sender<u8>)> = {
+            let http2_stream: Option<(Arc<Mutex<Http2Stream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, Http2Streams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, Http2Stream> = stream_arc.lock().unwrap();
+            match http2_stream {
+              Some((http2_stream_safe, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, Http2Stream> =
+                  http2_stream_safe.lock().unwrap();
                 stream_lock.push_bytes(&bytes, is_attachment);
               }
               None => {
@@ -869,7 +894,7 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = HTTP2_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("http2_logger", &args, Vec::new(), true);
+                    uds.send("http2_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -882,7 +907,10 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_http2_push_file: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -892,14 +920,15 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let is_attachment: bool = v[2].as_u64().unwrap_or(0) != 0;
 
           if let Some(map) = HTTP2_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<Http2Stream>>, mpsc::Sender<u8>)> = {
+            let http2_stream: Option<(Arc<Mutex<Http2Stream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, Http2Streams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, Http2Stream> = stream_arc.lock().unwrap();
+            match http2_stream {
+              Some((http2_stream_safe, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, Http2Stream> =
+                  http2_stream_safe.lock().unwrap();
                 stream_lock.push_file(&file_path, is_attachment);
               }
               None => {
@@ -910,7 +939,7 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = HTTP2_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("http2_logger", &args, Vec::new(), true);
+                    uds.send("http2_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -923,7 +952,10 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_http2_push_json: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -933,14 +965,15 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let is_attachment: bool = v[2].as_u64().unwrap_or(0) != 0;
 
           if let Some(map) = HTTP2_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<Http2Stream>>, mpsc::Sender<u8>)> = {
+            let http2_stream: Option<(Arc<Mutex<Http2Stream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, Http2Streams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, Http2Stream> = stream_arc.lock().unwrap();
+            match http2_stream {
+              Some((http2_stream_safe, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, Http2Stream> =
+                  http2_stream_safe.lock().unwrap();
                 stream_lock.push_json(&json, is_attachment);
               }
               None => {
@@ -951,7 +984,7 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = HTTP2_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("http2_logger", &args, Vec::new(), true);
+                    uds.send("http2_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -964,7 +997,10 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_http2_set_code: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -973,14 +1009,15 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let code: u64 = v[1].as_u64().unwrap_or(0);
 
           if let Some(map) = HTTP2_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<Http2Stream>>, mpsc::Sender<u8>)> = {
+            let http2_stream: Option<(Arc<Mutex<Http2Stream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, Http2Streams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, Http2Stream> = stream_arc.lock().unwrap();
+            match http2_stream {
+              Some((http2_stream_safe, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, Http2Stream> =
+                  http2_stream_safe.lock().unwrap();
                 stream_lock.set_code(code as u16);
               }
               None => {
@@ -991,7 +1028,7 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = HTTP2_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("http2_logger", &args, Vec::new(), true);
+                    uds.send("http2_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -1004,7 +1041,10 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_http2_set_compression: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -1013,14 +1053,15 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let compression: &str = v[1].as_str().unwrap_or("");
 
           if let Some(map) = HTTP2_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<Http2Stream>>, mpsc::Sender<u8>)> = {
+            let http2_stream: Option<(Arc<Mutex<Http2Stream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, Http2Streams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, Http2Stream> = stream_arc.lock().unwrap();
+            match http2_stream {
+              Some((http2_stream_safe, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, Http2Stream> =
+                  http2_stream_safe.lock().unwrap();
                 if compression.len() > 0 {
                   stream_lock.set_compression(Some(String::from(compression)));
                   return;
@@ -1036,7 +1077,7 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = HTTP2_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("http2_logger", &args, Vec::new(), true);
+                    uds.send("http2_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -1049,7 +1090,10 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_http2_set_headers: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -1071,14 +1115,15 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           }
 
           if let Some(map) = HTTP2_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<Http2Stream>>, mpsc::Sender<u8>)> = {
+            let http2_stream: Option<(Arc<Mutex<Http2Stream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, Http2Streams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, Http2Stream> = stream_arc.lock().unwrap();
+            match http2_stream {
+              Some((http2_stream_safe, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, Http2Stream> =
+                  http2_stream_safe.lock().unwrap();
                 stream_lock.set_headers(headers);
               }
               None => {
@@ -1089,7 +1134,7 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = HTTP2_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("http2_logger", &args, Vec::new(), true);
+                    uds.send("http2_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -1101,7 +1146,7 @@ fn http2_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
     },
   );
 
-  let mut uds: UnixDomainSocket = UnixDomainSocket::new(uds_opts);
+  let uds: UnixDomainSocket = UnixDomainSocket::new(uds_opts);
   uds.on("http2_add_header", uds_http2_add_header);
   uds.on("http2_end", uds_http2_end);
   uds.on("http2_push_bytes", uds_http2_push_bytes);
@@ -1174,14 +1219,20 @@ fn http2_logger(mut cx: FunctionContext) -> JsResult<JsUndefined> {
 
     if let Some(map) = HTTP2_UDS_MAP.get() {
       if let Some(uds) = map.lock().unwrap().get(&id) {
-        uds.push("http2_logger", &args, bytes, true);
+        uds.send("http2_logger", &args, bytes, true);
       }
     }
   });
 
+  if let Some(map) = HTTP1_UDS_MAP.get() {
+    if let Some(uds) = map.lock().unwrap().get(&id) {
+      uds.logger(Arc::clone(&http2_logger));
+    }
+  }
+
   if let Some(map) = HTTP2_MAP.get() {
     if let Some(http2) = map.lock().unwrap().get(&id) {
-      http2.logger(http2_logger);
+      http2.logger(Arc::clone(&http2_logger));
     }
   }
 
@@ -1211,40 +1262,13 @@ fn http2_on(mut cx: FunctionContext) -> JsResult<JsUndefined> {
 
       if let Some(map) = HTTP2_UDS_MAP.get() {
         if let Some(uds) = map.lock().unwrap().get(&id) {
-          uds.push("http2_on", &args, bytes, true);
+          uds.send("http2_on", &args, bytes, true);
         }
       }
 
-      loop {
-        match rx.recv_timeout(Duration::from_secs(90)) {
-          Ok(val) => {
-            if val == 1 {
-              break;
-            }
-          }
-          Err(RecvTimeoutError::Timeout) => {
-            let args: JSON =
-              serde_json::json!(["error", "NEON error in http2_on: Stream response timeout."]);
-            if let Some(map) = HTTP2_UDS_MAP.get() {
-              if let Some(uds) = map.lock().unwrap().get(&id) {
-                uds.push("http2_logger", &args, Vec::new(), true);
-              }
-            }
-            break;
-          }
-          Err(RecvTimeoutError::Disconnected) => {
-            let args: JSON = serde_json::json!([
-              "error",
-              "NEON error in http2_on: Stream channel disconnected."
-            ]);
-            if let Some(map) = HTTP2_UDS_MAP.get() {
-              if let Some(uds) = map.lock().unwrap().get(&id) {
-                uds.push("http2_logger", &args, Vec::new(), true);
-              }
-            }
-
-            break;
-          }
+      while let Ok(v) = rx.recv() {
+        if v == 1 {
+          break;
         }
       }
 
@@ -1350,21 +1374,25 @@ fn ws_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   };
 
   let uds_ws_close: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
         Some(v) => {
           let stream_id: u64 = v[0].as_u64().unwrap_or(0);
           if let Some(map) = WS_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<WebSocketStream>>, mpsc::Sender<u8>)> = {
+            let ws_stream: Option<(Arc<Mutex<WebSocketStream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, WebSocketStreams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, tx)) => {
-                let mut stream_lock: MutexGuard<'_, WebSocketStream> = stream_arc.lock().unwrap();
+            match ws_stream {
+              Some((ws_stream_safe, tx)) => {
+                let mut stream_lock: MutexGuard<'_, WebSocketStream> =
+                  ws_stream_safe.lock().unwrap();
                 stream_lock.close();
                 let _ = tx.send(1);
               }
@@ -1374,7 +1402,7 @@ fn ws_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = WS_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("ws_logger", &args, Vec::new(), true);
+                    uds.send("ws_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -1387,7 +1415,10 @@ fn ws_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_ws_push: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -1397,14 +1428,15 @@ fn ws_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let bytes: Vec<u8> = bytes.lock().unwrap().clone();
 
           if let Some(map) = WS_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<WebSocketStream>>, mpsc::Sender<u8>)> = {
+            let ws_stream: Option<(Arc<Mutex<WebSocketStream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, WebSocketStreams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, WebSocketStream> = stream_arc.lock().unwrap();
+            match ws_stream {
+              Some((ws_stream_safe, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, WebSocketStream> =
+                  ws_stream_safe.lock().unwrap();
                 stream_lock.push(&json, &bytes);
               }
               None => {
@@ -1413,7 +1445,7 @@ fn ws_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = WS_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("ws_logger", &args, Vec::new(), true);
+                    uds.send("ws_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -1426,7 +1458,10 @@ fn ws_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_ws_push_bytes: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -1435,14 +1470,15 @@ fn ws_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let bytes: Vec<u8> = bytes.lock().unwrap().clone();
 
           if let Some(map) = WS_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<WebSocketStream>>, mpsc::Sender<u8>)> = {
+            let ws_stream: Option<(Arc<Mutex<WebSocketStream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, WebSocketStreams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, WebSocketStream> = stream_arc.lock().unwrap();
+            match ws_stream {
+              Some((ws_stream_safe, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, WebSocketStream> =
+                  ws_stream_safe.lock().unwrap();
                 stream_lock.push_bytes(&bytes);
               }
               None => {
@@ -1451,7 +1487,7 @@ fn ws_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = WS_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("ws_logger", &args, Vec::new(), true);
+                    uds.send("ws_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -1464,7 +1500,10 @@ fn ws_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_ws_push_json: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -1473,14 +1512,15 @@ fn ws_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let json: JSON = v[1].clone();
 
           if let Some(map) = WS_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<WebSocketStream>>, mpsc::Sender<u8>)> = {
+            let ws_stream: Option<(Arc<Mutex<WebSocketStream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, WebSocketStreams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, WebSocketStream> = stream_arc.lock().unwrap();
+            match ws_stream {
+              Some((ws_stream_safe, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, WebSocketStream> =
+                  ws_stream_safe.lock().unwrap();
                 stream_lock.push_json(&json);
               }
               None => {
@@ -1489,7 +1529,7 @@ fn ws_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = WS_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("ws_logger", &args, Vec::new(), true);
+                    uds.send("ws_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -1502,7 +1542,10 @@ fn ws_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_ws_set_compression: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -1511,14 +1554,15 @@ fn ws_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let compression: &str = v[1].as_str().unwrap_or("");
 
           if let Some(map) = WS_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<WebSocketStream>>, mpsc::Sender<u8>)> = {
+            let ws_stream: Option<(Arc<Mutex<WebSocketStream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, WebSocketStreams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, WebSocketStream> = stream_arc.lock().unwrap();
+            match ws_stream {
+              Some((ws_stream_safe, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, WebSocketStream> =
+                  ws_stream_safe.lock().unwrap();
                 if compression.len() > 0 {
                   stream_lock.set_compression(Some(String::from(compression)));
                   return;
@@ -1534,7 +1578,7 @@ fn ws_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = WS_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("ws_logger", &args, Vec::new(), true);
+                    uds.send("ws_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -1546,7 +1590,7 @@ fn ws_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
     },
   );
 
-  let mut uds: UnixDomainSocket = UnixDomainSocket::new(uds_opts);
+  let uds: UnixDomainSocket = UnixDomainSocket::new(uds_opts);
   uds.on("ws_close", uds_ws_close);
   uds.on("ws_push", uds_ws_push);
   uds.on("ws_push_bytes", uds_ws_push_bytes);
@@ -1605,14 +1649,20 @@ fn ws_logger(mut cx: FunctionContext) -> JsResult<JsUndefined> {
 
     if let Some(map) = WS_UDS_MAP.get() {
       if let Some(uds) = map.lock().unwrap().get(&id) {
-        uds.push("ws_logger", &args, bytes, true);
+        uds.send("ws_logger", &args, bytes, true);
       }
     }
   });
 
+  if let Some(map) = HTTP1_UDS_MAP.get() {
+    if let Some(uds) = map.lock().unwrap().get(&id) {
+      uds.logger(Arc::clone(&ws_logger));
+    }
+  }
+
   if let Some(map) = WS_MAP.get() {
     if let Some(ws) = map.lock().unwrap().get(&id) {
-      ws.logger(ws_logger);
+      ws.logger(Arc::clone(&ws_logger));
     }
   }
 
@@ -1645,38 +1695,13 @@ fn ws_on(mut cx: FunctionContext) -> JsResult<JsUndefined> {
 
       if let Some(map) = WS_UDS_MAP.get() {
         if let Some(uds) = map.lock().unwrap().get(&id) {
-          uds.push("ws_on", &args, bytes, true);
+          uds.send("ws_on", &args, bytes, true);
         }
       }
 
-      loop {
-        match rx.recv_timeout(Duration::from_secs(90)) {
-          Ok(val) => {
-            if val == 1 {
-              break;
-            }
-          }
-          Err(RecvTimeoutError::Timeout) => {
-            let args: JSON =
-              serde_json::json!(["error", "NEON error in ws_on: Stream response timeout."]);
-            if let Some(map) = WS_UDS_MAP.get() {
-              if let Some(uds) = map.lock().unwrap().get(&id) {
-                uds.push("ws_logger", &args, Vec::new(), true);
-              }
-            }
-            break;
-          }
-          Err(RecvTimeoutError::Disconnected) => {
-            let args: JSON =
-              serde_json::json!(["error", "NEON error in ws_on: Stream channel disconnected."]);
-            if let Some(map) = WS_UDS_MAP.get() {
-              if let Some(uds) = map.lock().unwrap().get(&id) {
-                uds.push("ws_logger", &args, Vec::new(), true);
-              }
-            }
-
-            break;
-          }
+      while let Ok(v) = rx.recv() {
+        if v == 1 {
+          break;
         }
       }
 
@@ -1782,7 +1807,10 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   };
 
   let uds_http3_add_header: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -1792,14 +1820,15 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let value: String = v[2].as_str().unwrap_or("").to_string();
 
           if let Some(map) = HTTP3_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<Http3Stream>>, mpsc::Sender<u8>)> = {
+            let http3_stream: Option<(Arc<Mutex<Http3Stream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, Http3Streams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, Http3Stream> = stream_arc.lock().unwrap();
+            match http3_stream {
+              Some((http3_stream_safe, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, Http3Stream> =
+                  http3_stream_safe.lock().unwrap();
                 stream_lock.add_header(&key, &value);
               }
               None => {
@@ -1810,7 +1839,7 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = HTTP3_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("http3_logger", &args, Vec::new(), true);
+                    uds.send("http3_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -1823,7 +1852,10 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_http3_end: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -1831,14 +1863,15 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let stream_id: u64 = v[0].as_u64().unwrap_or(0);
 
           if let Some(map) = HTTP3_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<Http3Stream>>, mpsc::Sender<u8>)> = {
+            let http3_stream: Option<(Arc<Mutex<Http3Stream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, Http3Streams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, tx)) => {
-                let mut stream_lock: MutexGuard<'_, Http3Stream> = stream_arc.lock().unwrap();
+            match http3_stream {
+              Some((http3_stream_safe, tx)) => {
+                let mut stream_lock: MutexGuard<'_, Http3Stream> =
+                  http3_stream_safe.lock().unwrap();
                 stream_lock.end();
                 let _ = tx.send(1);
               }
@@ -1848,7 +1881,7 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = HTTP3_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("http3_logger", &args, Vec::new(), true);
+                    uds.send("http3_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -1861,7 +1894,10 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_http3_push_bytes: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -1871,14 +1907,15 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let bytes: Vec<u8> = bytes.lock().unwrap().clone();
 
           if let Some(map) = HTTP3_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<Http3Stream>>, mpsc::Sender<u8>)> = {
+            let http3_stream: Option<(Arc<Mutex<Http3Stream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, Http3Streams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, Http3Stream> = stream_arc.lock().unwrap();
+            match http3_stream {
+              Some((http3_stream_safe, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, Http3Stream> =
+                  http3_stream_safe.lock().unwrap();
                 stream_lock.push_bytes(&bytes, is_attachment);
               }
               None => {
@@ -1889,7 +1926,7 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = HTTP3_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("http3_logger", &args, Vec::new(), true);
+                    uds.send("http3_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -1902,7 +1939,10 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_http3_push_file: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -1912,14 +1952,15 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let is_attachment: bool = v[2].as_u64().unwrap_or(0) != 0;
 
           if let Some(map) = HTTP3_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<Http3Stream>>, mpsc::Sender<u8>)> = {
+            let http3_stream: Option<(Arc<Mutex<Http3Stream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, Http3Streams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, Http3Stream> = stream_arc.lock().unwrap();
+            match http3_stream {
+              Some((http3_stream_safe, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, Http3Stream> =
+                  http3_stream_safe.lock().unwrap();
                 stream_lock.push_file(&file_path, is_attachment);
               }
               None => {
@@ -1930,7 +1971,7 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = HTTP3_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("http3_logger", &args, Vec::new(), true);
+                    uds.send("http3_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -1943,7 +1984,10 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_http3_push_json: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -1953,14 +1997,15 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let is_attachment: bool = v[2].as_u64().unwrap_or(0) != 0;
 
           if let Some(map) = HTTP3_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<Http3Stream>>, mpsc::Sender<u8>)> = {
+            let http3_stream: Option<(Arc<Mutex<Http3Stream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, Http3Streams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, Http3Stream> = stream_arc.lock().unwrap();
+            match http3_stream {
+              Some((http3_stream_safe, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, Http3Stream> =
+                  http3_stream_safe.lock().unwrap();
                 stream_lock.push_json(&json, is_attachment);
               }
               None => {
@@ -1971,7 +2016,7 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = HTTP3_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("http3_logger", &args, Vec::new(), true);
+                    uds.send("http3_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -1984,7 +2029,10 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_http3_set_code: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -1993,14 +2041,15 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let code: u64 = v[1].as_u64().unwrap_or(0);
 
           if let Some(map) = HTTP3_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<Http3Stream>>, mpsc::Sender<u8>)> = {
+            let http3_stream: Option<(Arc<Mutex<Http3Stream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, Http3Streams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, Http3Stream> = stream_arc.lock().unwrap();
+            match http3_stream {
+              Some((http3_stream_safe, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, Http3Stream> =
+                  http3_stream_safe.lock().unwrap();
                 stream_lock.set_code(code as u16);
               }
               None => {
@@ -2011,7 +2060,7 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = HTTP3_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("http3_logger", &args, Vec::new(), true);
+                    uds.send("http3_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -2024,7 +2073,10 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_http3_set_compression: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -2033,14 +2085,15 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let compression: &str = v[1].as_str().unwrap_or("");
 
           if let Some(map) = HTTP3_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<Http3Stream>>, mpsc::Sender<u8>)> = {
+            let http3_stream: Option<(Arc<Mutex<Http3Stream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, Http3Streams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, Http3Stream> = stream_arc.lock().unwrap();
+            match http3_stream {
+              Some((http3_stream_safe, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, Http3Stream> =
+                  http3_stream_safe.lock().unwrap();
                 if compression.len() > 0 {
                   stream_lock.set_compression(Some(String::from(compression)));
                   return;
@@ -2056,7 +2109,7 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = HTTP3_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("http3_logger", &args, Vec::new(), true);
+                    uds.send("http3_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -2069,7 +2122,10 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_http3_set_headers: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -2090,14 +2146,15 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           }
 
           if let Some(map) = HTTP3_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<Http3Stream>>, mpsc::Sender<u8>)> = {
+            let http3_stream: Option<(Arc<Mutex<Http3Stream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, Http3Streams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
-                let mut stream_lock: MutexGuard<'_, Http3Stream> = stream_arc.lock().unwrap();
+            match http3_stream {
+              Some((http3_stream_safe, _tx)) => {
+                let mut stream_lock: MutexGuard<'_, Http3Stream> =
+                  http3_stream_safe.lock().unwrap();
                 stream_lock.set_headers(headers);
               }
               None => {
@@ -2108,7 +2165,7 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = HTTP3_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("http3_logger", &args, Vec::new(), true);
+                    uds.send("http3_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -2120,7 +2177,7 @@ fn http3_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
     },
   );
 
-  let mut uds: UnixDomainSocket = UnixDomainSocket::new(uds_opts);
+  let uds: UnixDomainSocket = UnixDomainSocket::new(uds_opts);
   uds.on("http3_add_header", uds_http3_add_header);
   uds.on("http3_end", uds_http3_end);
   uds.on("http3_push_bytes", uds_http3_push_bytes);
@@ -2193,14 +2250,20 @@ fn http3_logger(mut cx: FunctionContext) -> JsResult<JsUndefined> {
 
     if let Some(map) = HTTP3_UDS_MAP.get() {
       if let Some(uds) = map.lock().unwrap().get(&id) {
-        uds.push("http3_logger", &args, bytes, true);
+        uds.send("http3_logger", &args, bytes, true);
       }
     }
   });
 
+  if let Some(map) = HTTP1_UDS_MAP.get() {
+    if let Some(uds) = map.lock().unwrap().get(&id) {
+      uds.logger(Arc::clone(&http3_logger));
+    }
+  }
+
   if let Some(map) = HTTP3_MAP.get() {
     if let Some(http3) = map.lock().unwrap().get(&id) {
-      http3.logger(http3_logger);
+      http3.logger(Arc::clone(&http3_logger));
     }
   }
 
@@ -2230,40 +2293,13 @@ fn http3_on(mut cx: FunctionContext) -> JsResult<JsUndefined> {
 
       if let Some(map) = HTTP3_UDS_MAP.get() {
         if let Some(uds) = map.lock().unwrap().get(&id) {
-          uds.push("http3_on", &args, bytes, true);
+          uds.send("http3_on", &args, bytes, true);
         }
       }
 
-      loop {
-        match rx.recv_timeout(Duration::from_secs(90)) {
-          Ok(val) => {
-            if val == 1 {
-              break;
-            }
-          }
-          Err(RecvTimeoutError::Timeout) => {
-            let args: JSON =
-              serde_json::json!(["error", "NEON error in http3_on: Stream response timeout."]);
-            if let Some(map) = HTTP3_UDS_MAP.get() {
-              if let Some(uds) = map.lock().unwrap().get(&id) {
-                uds.push("http3_logger", &args, Vec::new(), true);
-              }
-            }
-            break;
-          }
-          Err(RecvTimeoutError::Disconnected) => {
-            let args: JSON = serde_json::json!([
-              "error",
-              "NEON error in http3_on: Stream channel disconnected."
-            ]);
-            if let Some(map) = HTTP3_UDS_MAP.get() {
-              if let Some(uds) = map.lock().unwrap().get(&id) {
-                uds.push("http3_logger", &args, Vec::new(), true);
-              }
-            }
-
-            break;
-          }
+      while let Ok(v) = rx.recv() {
+        if v == 1 {
+          break;
         }
       }
 
@@ -2369,22 +2405,25 @@ fn wt_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   };
 
   let uds_wt_close: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
         Some(v) => {
           let stream_id: u64 = v[0].as_u64().unwrap_or(0);
           if let Some(map) = WT_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<WebTransportStream>>, mpsc::Sender<u8>)> = {
+            let wt_stream: Option<(Arc<Mutex<WebTransportStream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, WebTransportStreams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, tx)) => {
+            match wt_stream {
+              Some((wt_stream_safe, tx)) => {
                 let mut stream_lock: MutexGuard<'_, WebTransportStream> =
-                  stream_arc.lock().unwrap();
+                  wt_stream_safe.lock().unwrap();
                 stream_lock.close();
                 let _ = tx.send(1);
               }
@@ -2394,7 +2433,7 @@ fn wt_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = WT_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("wt_logger", &args, Vec::new(), true);
+                    uds.send("wt_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -2407,7 +2446,10 @@ fn wt_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_wt_push: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -2417,15 +2459,15 @@ fn wt_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let bytes: Vec<u8> = bytes.lock().unwrap().clone();
 
           if let Some(map) = WT_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<WebTransportStream>>, mpsc::Sender<u8>)> = {
+            let wt_stream: Option<(Arc<Mutex<WebTransportStream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, WebTransportStreams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
+            match wt_stream {
+              Some((wt_stream_safe, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, WebTransportStream> =
-                  stream_arc.lock().unwrap();
+                  wt_stream_safe.lock().unwrap();
                 stream_lock.push(&json, &bytes);
               }
               None => {
@@ -2434,7 +2476,7 @@ fn wt_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = WT_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("wt_logger", &args, Vec::new(), true);
+                    uds.send("wt_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -2447,7 +2489,10 @@ fn wt_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_wt_push_bytes: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -2456,15 +2501,15 @@ fn wt_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let bytes: Vec<u8> = bytes.lock().unwrap().clone();
 
           if let Some(map) = WT_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<WebTransportStream>>, mpsc::Sender<u8>)> = {
+            let wt_stream: Option<(Arc<Mutex<WebTransportStream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, WebTransportStreams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
+            match wt_stream {
+              Some((wt_stream_safe, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, WebTransportStream> =
-                  stream_arc.lock().unwrap();
+                  wt_stream_safe.lock().unwrap();
                 stream_lock.push_bytes(&bytes);
               }
               None => {
@@ -2473,7 +2518,7 @@ fn wt_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = WT_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("wt_logger", &args, Vec::new(), true);
+                    uds.send("wt_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -2486,7 +2531,10 @@ fn wt_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_wt_push_json: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -2495,15 +2543,15 @@ fn wt_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let json: JSON = v[1].clone();
 
           if let Some(map) = WT_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<WebTransportStream>>, mpsc::Sender<u8>)> = {
+            let wt_stream: Option<(Arc<Mutex<WebTransportStream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, WebTransportStreams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
+            match wt_stream {
+              Some((wt_stream_safe, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, WebTransportStream> =
-                  stream_arc.lock().unwrap();
+                  wt_stream_safe.lock().unwrap();
                 stream_lock.push_json(&json);
               }
               None => {
@@ -2512,7 +2560,7 @@ fn wt_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = WT_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("wt_logger", &args, Vec::new(), true);
+                    uds.send("wt_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -2525,7 +2573,10 @@ fn wt_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   );
 
   let uds_wt_set_compression: Arc<UnixDomainSocketHandler> = Arc::new(
-    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>, _bytes: Arc<Mutex<UnixDomainSocketBytes>>| -> () {
+    move |ctx: Arc<Mutex<UnixDomainSocketCtx>>,
+          _bytes: Arc<Mutex<UnixDomainSocketBytes>>,
+          _stream: Arc<Mutex<UnixDomainSocketStream>>|
+          -> () {
       let args: JSON = ctx.lock().unwrap().clone();
 
       match args.as_array() {
@@ -2534,15 +2585,15 @@ fn wt_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
           let compression: &str = v[1].as_str().unwrap_or("");
 
           if let Some(map) = WT_STREAMS.get() {
-            let stream: Option<(Arc<Mutex<WebTransportStream>>, mpsc::Sender<u8>)> = {
+            let wt_stream: Option<(Arc<Mutex<WebTransportStream>>, mpsc::Sender<u8>)> = {
               let streams: MutexGuard<'_, WebTransportStreams> = map.lock().unwrap();
               streams.get(&stream_id).cloned()
             };
 
-            match stream {
-              Some((stream_arc, _tx)) => {
+            match wt_stream {
+              Some((wt_stream_safe, _tx)) => {
                 let mut stream_lock: MutexGuard<'_, WebTransportStream> =
-                  stream_arc.lock().unwrap();
+                  wt_stream_safe.lock().unwrap();
                 if compression.len() > 0 {
                   stream_lock.set_compression(Some(String::from(compression)));
                   return;
@@ -2558,7 +2609,7 @@ fn wt_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
 
                 if let Some(map) = WT_UDS_MAP.get() {
                   if let Some(uds) = map.lock().unwrap().get(&new_id) {
-                    uds.push("wt_logger", &args, Vec::new(), true);
+                    uds.send("wt_logger", &args, Vec::new(), true);
                   }
                 }
               }
@@ -2570,7 +2621,7 @@ fn wt_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
     },
   );
 
-  let mut uds: UnixDomainSocket = UnixDomainSocket::new(uds_opts);
+  let uds: UnixDomainSocket = UnixDomainSocket::new(uds_opts);
   uds.on("wt_close", uds_wt_close);
   uds.on("wt_push", uds_wt_push);
   uds.on("wt_push_bytes", uds_wt_push_bytes);
@@ -2631,14 +2682,20 @@ fn wt_logger(mut cx: FunctionContext) -> JsResult<JsUndefined> {
 
     if let Some(map) = WT_UDS_MAP.get() {
       if let Some(uds) = map.lock().unwrap().get(&id) {
-        uds.push("wt_logger", &args, bytes, true);
+        uds.send("wt_logger", &args, bytes, true);
       }
     }
   });
 
+  if let Some(map) = HTTP1_UDS_MAP.get() {
+    if let Some(uds) = map.lock().unwrap().get(&id) {
+      uds.logger(Arc::clone(&wt_logger));
+    }
+  }
+
   if let Some(map) = WT_MAP.get() {
     if let Some(wt) = map.lock().unwrap().get(&id) {
-      wt.logger(wt_logger);
+      wt.logger(Arc::clone(&wt_logger));
     }
   }
 
@@ -2671,38 +2728,13 @@ fn wt_on(mut cx: FunctionContext) -> JsResult<JsUndefined> {
 
       if let Some(map) = WT_UDS_MAP.get() {
         if let Some(uds) = map.lock().unwrap().get(&id) {
-          uds.push("wt_on", &args, bytes, true);
+          uds.send("wt_on", &args, bytes, true);
         }
       }
 
-      loop {
-        match rx.recv_timeout(Duration::from_secs(90)) {
-          Ok(val) => {
-            if val == 1 {
-              break;
-            }
-          }
-          Err(RecvTimeoutError::Timeout) => {
-            let args: JSON =
-              serde_json::json!(["error", "NEON error in wt_on: Stream response timeout."]);
-            if let Some(map) = WT_UDS_MAP.get() {
-              if let Some(uds) = map.lock().unwrap().get(&id) {
-                uds.push("wt_logger", &args, Vec::new(), true);
-              }
-            }
-            break;
-          }
-          Err(RecvTimeoutError::Disconnected) => {
-            let args: JSON =
-              serde_json::json!(["error", "NEON error in wt_on: Stream channel disconnected."]);
-            if let Some(map) = WT_UDS_MAP.get() {
-              if let Some(uds) = map.lock().unwrap().get(&id) {
-                uds.push("wt_logger", &args, Vec::new(), true);
-              }
-            }
-
-            break;
-          }
+      while let Ok(v) = rx.recv() {
+        if v == 1 {
+          break;
         }
       }
 

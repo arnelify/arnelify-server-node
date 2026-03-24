@@ -164,6 +164,7 @@ class UnixDomainSocketStream {
 exports.UnixDomainSocketStream = UnixDomainSocketStream;
 class UnixDomainSocket {
     constructor(opts) {
+        this.client = null;
         this.cb_handlers = {};
         this.cb_logger = async (_level, message) => {
             console.log(message);
@@ -188,28 +189,38 @@ class UnixDomainSocket {
         const meta = Buffer.from(`${json_length}+${bytes_length}:`, "utf-8");
         const buff = Buffer.concat([meta, json_bytes, bytes]);
         return new Promise((resolve, reject) => {
-            this.client.write(buff, (err) => {
-                if (err)
-                    reject(err);
-                else
+            if (this.client) {
+                this.client.write(buff, (err) => {
+                    if (err)
+                        reject(err);
                     resolve();
-            });
+                });
+            }
         });
     }
     async start() {
+        this.client = net_1.default.createConnection(this.opts.socket_path);
+        await new Promise((resolve) => {
+            if (this.client) {
+                this.client.on('connect', () => {
+                    resolve(1);
+                });
+            }
+        });
         const req = new UnixDomainSocketReq(this.opts);
         const stream = new UnixDomainSocketStream(this.opts);
         stream.on_send(async (bytes) => {
             return new Promise((resolve, reject) => {
-                this.client.write(bytes, (err) => {
-                    if (err)
-                        reject(err);
-                    else
-                        resolve();
-                });
+                if (this.client) {
+                    this.client.write(bytes, (err) => {
+                        if (err)
+                            reject(err);
+                        else
+                            resolve();
+                    });
+                }
             });
         });
-        this.client = net_1.default.createConnection(this.opts.socket_path);
         this.client.on('data', async (bytes) => {
             req.add(bytes);
             while (true) {
@@ -242,7 +253,9 @@ class UnixDomainSocket {
         });
     }
     async stop() {
-        this.client.end();
+        if (this.client) {
+            this.client.end();
+        }
     }
 }
 exports.UnixDomainSocket = UnixDomainSocket;

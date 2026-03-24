@@ -24,5 +24,5 @@ pub mod uds;
 
 pub use uds::{
   UnixDomainSocket, UnixDomainSocketBytes, UnixDomainSocketCtx, UnixDomainSocketHandler,
-  UnixDomainSocketOpts,
+  UnixDomainSocketOpts, UnixDomainSocketStream
 };
