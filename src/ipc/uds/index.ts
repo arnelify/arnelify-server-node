@@ -208,7 +208,7 @@ class UnixDomainSocket {
   cb_handlers: Record<string, UnixDomainSocketHandler> = {};
 
   cb_logger = async (_level: string, message: string): Promise<void> => {
-    console.log(message);
+    console.log(`[Arnelify Server]: ${message}`);
   };
 
   constructor(opts: UnixDomainSocketOpts) {

@@ -28,6 +28,7 @@ use std::{
   sync::{
     Arc, Mutex, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard,
     atomic::{AtomicU64, Ordering},
+    mpsc,
   },
 };
 
@@ -35,7 +36,7 @@ use tokio::{
   io::{AsyncReadExt, AsyncWriteExt},
   net::UnixListener,
   runtime::{Builder, Runtime},
-  sync::{Notify, mpsc},
+  sync::Notify,
 };
 
 pub type UnixDomainSocketBytes = Vec<u8>;
@@ -320,7 +321,7 @@ async fn acceptor(
         Arc::clone(&handlers_rt);
       let opts_accept: Arc<UnixDomainSocketOpts> = Arc::clone(&opts_rt);
 
-      let (tx, mut rx) = mpsc::channel::<(Vec<u8>, bool)>(2048);
+      let (tx, rx) = mpsc::channel::<(Vec<u8>, bool)>();
       let tx_safe: Arc<mpsc::Sender<(Vec<u8>, bool)>> = Arc::new(tx);
       {
         let mut stream: RwLockWriteGuard<'_, HashMap<u64, Arc<mpsc::Sender<(Vec<u8>, bool)>>>> =
@@ -334,8 +335,7 @@ async fn acceptor(
 
       // WRITE TASK
       tokio::spawn(async move {
-        while let Some(event) = rx.recv().await {
-          let (chunk, flush) = event;
+        while let Ok((chunk, flush)) = rx.recv() {
           let _ = writer.write_all(&chunk).await;
           if flush {
             writer.flush().await.unwrap();
@@ -379,7 +379,7 @@ async fn acceptor(
                       stream_lock.on_send(Arc::new({
                         let tx_safe: Arc<mpsc::Sender<(Vec<u8>, bool)>> = Arc::clone(&tx_safe);
                         move |chunk: Vec<u8>, flush: bool| {
-                          let _ = tx_safe.try_send((chunk, flush));
+                          let _ = tx_safe.send((chunk, flush));
                         }
                       }));
                     }
@@ -495,7 +495,7 @@ impl UnixDomainSocket {
 
       match stream {
         Some(tx_req) => {
-          let _ = tx_req.try_send((buff, flush));
+          let _ = tx_req.send((buff, flush));
         }
         None => {
           let logger_lock: RwLockReadGuard<'_, Arc<UnixDomainSocketLogger>> =

@@ -1658,7 +1658,7 @@ async fn acceptor(
       let (mut reader, mut writer) = socket.into_split();
       {
         let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> = logger.read().unwrap();
-        (logger_lock)("info", &format!("Client {:?}: Connected", addr));
+        (logger_lock)("info", &format!("Client {}: Connected", addr));
       }
 
       let logger_conn: Arc<RwLock<Arc<Http1Logger>>> = Arc::clone(&logger);
@@ -1688,7 +1688,7 @@ async fn acceptor(
             Ok(Ok(0)) => {
               disconnect(&on_disconnect, &last_ctx, &opts_conn).await;
               let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> = logger_conn.read().unwrap();
-              logger_lock("info", &format!("Client {:?}: Disconnected", addr));
+              logger_lock("info", &format!("Client {}: Disconnected", addr));
               return;
             }
             Ok(Ok(n)) => n,
@@ -1697,7 +1697,7 @@ async fn acceptor(
               let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> = logger_conn.read().unwrap();
               logger_lock(
                 "warning",
-                &format!("Client {:?}: Socket read error: {}", addr, e),
+                &format!("Client {}: Socket read error: {}", addr, e),
               );
               return;
             }
@@ -1705,11 +1705,11 @@ async fn acceptor(
               disconnect(&on_disconnect, &last_ctx, &opts_conn).await;
               let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> = logger_conn.read().unwrap();
               if no_bytes {
-                logger_lock("info", &format!("Client {:?}: Keep-alive timeout", addr));
+                logger_lock("info", &format!("Client {}: Keep-alive timeout", addr));
                 return;
               }
 
-              logger_lock("warning", &format!("Client {:?}: Read timeout", addr));
+              logger_lock("warning", &format!("Client {}: Read timeout", addr));
               return;
             }
           };
@@ -1733,7 +1733,7 @@ async fn acceptor(
                     logger_conn.read().unwrap();
                   logger_lock(
                     "info",
-                    &format!("Client {:?}: Sent payload: {}", addr, payload),
+                    &format!("Client {}: Sent payload: {}", addr, payload),
                   );
                 }
 
@@ -1790,7 +1790,7 @@ async fn acceptor(
                           disconnect(&on_disconnect, &last_ctx, &opts_conn).await;
                           let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> =
                             logger_conn.read().unwrap();
-                          logger_lock("warning", &format!("Client {:?}: Write error: {}", addr, e));
+                          logger_lock("warning", &format!("Client {}: Write error: {}", addr, e));
                           return;
                         }
                       }
@@ -1800,13 +1800,13 @@ async fn acceptor(
                           disconnect(&on_disconnect, &last_ctx, &opts_conn).await;
                           let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> =
                             logger_conn.read().unwrap();
-                          logger_lock("warning", &format!("Client {:?}: Flush error: {}", addr, e));
+                          logger_lock("warning", &format!("Client {}: Flush error: {}", addr, e));
                           return;
                         }
 
                         let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> =
                           logger_conn.read().unwrap();
-                        logger_lock("info", &format!("Client {:?}: Write task finished", addr));
+                        logger_lock("info", &format!("Client {}: Write task finished", addr));
                         break;
                       }
                     }
@@ -1815,7 +1815,7 @@ async fn acceptor(
                       disconnect(&on_disconnect, &last_ctx, &opts_conn).await;
                       let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> =
                         logger_conn.read().unwrap();
-                      logger_lock("warning", &format!("Client {:?}: Write timeout", addr));
+                      logger_lock("warning", &format!("Client {}: Write timeout", addr));
                       return;
                     }
                   }
@@ -1829,7 +1829,7 @@ async fn acceptor(
                     logger_conn.read().unwrap();
                   logger_lock(
                     "warning",
-                    &format!("Client {:?}: Block read error: {}", addr, e),
+                    &format!("Client {}: Block read error: {}", addr, e),
                   );
 
                   return;
@@ -1869,7 +1869,7 @@ async fn acceptor(
                         disconnect(&on_disconnect, &last_ctx, &opts_conn).await;
                         let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> =
                           logger_conn.read().unwrap();
-                        logger_lock("warning", &format!("Client {:?}: Write error: {}", addr, e));
+                        logger_lock("warning", &format!("Client {}: Write error: {}", addr, e));
                         return;
                       }
                     }
@@ -1879,13 +1879,13 @@ async fn acceptor(
                         disconnect(&on_disconnect, &last_ctx, &opts_conn).await;
                         let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> =
                           logger_conn.read().unwrap();
-                        logger_lock("warning", &format!("Client {:?}: Flush error: {}", addr, e));
+                        logger_lock("warning", &format!("Client {}: Flush error: {}", addr, e));
                         return;
                       }
 
                       let logger_lock: RwLockReadGuard<'_, Arc<Http1Logger>> =
                         logger_conn.read().unwrap();
-                      logger_lock("info", &format!("Client {:?}: Write task finished", addr));
+                      logger_lock("info", &format!("Client {}: Write task finished", addr));
                       break;
                     }
                   }

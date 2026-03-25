@@ -167,7 +167,7 @@ class UnixDomainSocket {
         this.client = null;
         this.cb_handlers = {};
         this.cb_logger = async (_level, message) => {
-            console.log(message);
+            console.log(`[Arnelify Server]: ${message}`);
         };
         this.opts = opts;
     }
