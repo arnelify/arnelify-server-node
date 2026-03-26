@@ -1,6 +1,6 @@
 {
   "name": "arnelify-server",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Multi-language server with HTTP 3.0 and WebTransport support.",
   "author": "Arnelify",
   "license": "MIT",
@@ -15,6 +15,10 @@
     "test_http3": "clear && bun tests/tcp2/http3/index.ts",
     "test_wt": "clear && bun tests/tcp2/wt/index.ts"
   },
+  "devDependencies": {
+    "@types/node": "24.10.8",
+    "neon-cli": "0.10.1"
+  },
   "files": [
     "build/",
     "native/src/",
@@ -27,10 +31,6 @@
     "package.json",
     "README.md"
   ],
-  "devDependencies": {
-    "@types/node": "24.10.8",
-    "neon-cli": "0.10.1"
-  },
   "homepage": "https://github.com/arnelify/arnelify-server-node#readme",
   "repository": {
     "type": "git",
