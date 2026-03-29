@@ -1038,8 +1038,13 @@ impl Http1Req {
       }
     };
 
-    self.path = String::from(path);
-    self.ctx["_state"]["path"] = JSON::String(String::from(path));
+    if path.contains("..") || path.contains("\0") {
+      self.path = String::from("_");
+      self.ctx["_state"]["path"] = JSON::String(String::from("_"));
+    } else {
+      self.path = String::from(path);
+      self.ctx["_state"]["path"] = JSON::String(String::from(path));
+    }
 
     if let Some(qs_encoded) = query_encoded {
       let qs_bytes: Vec<u8> = qs_encoded.to_vec();
