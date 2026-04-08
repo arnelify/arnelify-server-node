@@ -1606,10 +1606,12 @@ fn ws_create(mut cx: FunctionContext) -> JsResult<JsNumber> {
   let ws_opts: WebSocketOpts = WebSocketOpts {
     block_size_kb: get_usize(&opts, "block_size_kb"),
     compression: get_bool(&opts, "compression"),
-    handshake_timeout: get_u64(&opts, "handshake_timeout"),
+    // handshake_timeout: get_u64(&opts, "handshake_timeout"),
     max_message_size_kb: get_u64(&opts, "max_message_size_kb"),
     ping_timeout: get_u64(&opts, "ping_timeout"),
     port: get_u16(&opts, "port"),
+    rate_limit: get_u64(&opts, "rate_limit"),
+    read_timeout: get_u64(&opts, "read_timeout"),
     send_timeout: get_u64(&opts, "send_timeout"),
     thread_limit: get_u64(&opts, "thread_limit"),
   };

@@ -30,10 +30,11 @@ import {
 type WebSocketOpts = {
   block_size_kb: number;
   compression: boolean;
-  handshake_timeout: number;
   max_message_size_kb: number;
   ping_timeout: number;
   port: number;
+  rate_limit: number;
+  read_timeout: number;
   send_timeout: number;
   thread_limit: number;
 };

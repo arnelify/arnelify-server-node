@@ -1968,7 +1968,7 @@ impl Http1 {
         String::from("_"),
         Arc::new(
           move |_ctx: Arc<Mutex<Http1Ctx>>, stream: Arc<Mutex<Http1Stream>>| {
-            let mut stream_lock = stream.lock().unwrap();
+            let mut stream_lock: std::sync::MutexGuard<'_, Http1Stream> = stream.lock().unwrap();
             stream_lock.set_code(404);
             stream_lock.push_json(
               &serde_json::json!({
@@ -2011,7 +2011,7 @@ impl Http1 {
   pub fn on(&self, path: &str, cb: Arc<Http1Handler>) {
     let mut handlers_write: RwLockWriteGuard<'_, HashMap<String, Arc<Http1Handler>>> =
       self.handlers.write().unwrap();
-    handlers_write.insert(path.to_string(), cb);
+    handlers_write.insert(String::from(path), cb);
   }
 
   pub fn start(&self) {

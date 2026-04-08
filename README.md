@@ -1,6 +1,6 @@
 <img src="https://static.wikia.nocookie.net/arnelify/images/c/c8/Arnelify-logo-2024.png/revision/latest?cb=20240701012515" style="width:336px;" alt="Arnelify Logo" />
 
-![Arnelify Server for NodeJS](https://img.shields.io/badge/Arnelify%20Server%20for%20NodeJS-1.0.5-yellow) ![NodeJS](https://img.shields.io/badge/NodeJS-22.13.1-green) ![Bun](https://img.shields.io/badge/Bun-1.2.0-blue)
+![Arnelify Server for NodeJS](https://img.shields.io/badge/Arnelify%20Server%20for%20NodeJS-1.0.6-yellow) ![NodeJS](https://img.shields.io/badge/NodeJS-22.13.1-green) ![Bun](https://img.shields.io/badge/Bun-1.2.0-blue)
 
 ## 🚀 About
 
@@ -171,11 +171,12 @@ import {
 | - | - |
 | **BLOCK_SIZE_KB**| The size of the allocated memory used for processing large packets. |
 | **COMPRESSION**| If this option is enabled, the server will use BROTLI compression if the client application supports it. This setting increases CPU resource consumption. The server will not use compression if the data size exceeds the value of **BLOCK_SIZE_KB**. |
-| **HANDSHAKE_TIMEOUT**| Maximum time in seconds to complete the TLS handshake. |
 | **MAX_MESSAGE_SIZE_MB**| Maximum size of a single message the server will accept from a client. |
 | **PING_TIMEOUT**| Maximum time the server will wait for a ping from the client. |
 | **PORT**| Defines which port the server will listen on. |
-| **SEND_TIMEOUT**| Maximum time for the client to receive a response from the server. |
+| **RATE_LIMIT**| Defines the maximum number of connections allowed from a single IP address. |
+| **READ_TIMEOUT**| Maximum time allowed for a client to send a request to the server. |
+| **SEND_TIMEOUT**| Maximum time allowed for the client to receive a response from the server. |
 | **THREAD_LIMIT**| Defines the maximum number of threads that will handle requests.|
 
 ### 📚 Examples
@@ -194,10 +195,11 @@ import {
   const ws_opts: WebSocketOpts = {
     block_size_kb: 64,
     compression: false,
-    handshake_timeout: 30,
     max_message_size_kb: 64,
     ping_timeout: 15,
     port: 4433,
+    rate_limit: 5,
+    read_timeout: 30,
     send_timeout: 30,
     thread_limit: 4
   };
@@ -393,7 +395,7 @@ yarn test_http1
 ```
 
 ## ⭐ Release Notes
-Version 1.0.5 — a multi-language server with HTTP 3.0 and WebTransport support.
+Version 1.0.6 — a multi-language server with HTTP 3.0 and WebTransport support.
 
 We are excited to introduce the Arnelify Server for NodeJS! Please note that this version is raw and still in active development.
 
