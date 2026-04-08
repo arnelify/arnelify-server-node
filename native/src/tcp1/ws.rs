@@ -753,15 +753,18 @@ pub type WebSocketLogger = dyn Fn(&str, &str) + Send + Sync;
 
 async fn disconnect(
   handler: &Option<Arc<WebSocketHandler>>,
-  args: &Option<(Arc<Mutex<WebSocketCtx>>, Arc<Mutex<WebSocketBytes>>)>,
+  args: &Arc<Mutex<Option<(Arc<Mutex<WebSocketCtx>>, Arc<Mutex<WebSocketBytes>>)>>>,
   opts: &WebSocketOpts,
 ) {
-  if let (Some(handler), Some((ctx, bytes))) = (handler, args) {
-    let ctx_close: Arc<Mutex<WebSocketCtx>> = Arc::clone(ctx);
-    let bytes_close: Arc<Mutex<WebSocketBytes>> = Arc::clone(bytes);
-    let stream_close: Arc<Mutex<WebSocketStream>> =
-      Arc::new(Mutex::new(WebSocketStream::new(opts.clone())));
-    handler(ctx_close, bytes_close, stream_close);
+  if let Some(handler) = handler {
+    let guard = args.lock().unwrap();
+    if let Some((ctx, bytes)) = &*guard {
+      handler(
+        Arc::clone(ctx),
+        Arc::clone(bytes),
+        Arc::new(Mutex::new(WebSocketStream::new(opts.clone()))),
+      );
+    }
   }
 }
 
@@ -808,9 +811,8 @@ async fn acceptor(
 
         let mut ip: String = String::from("_");
         let mut no_bytes: bool = true;
-        let mut last_args: Option<(Arc<Mutex<WebSocketCtx>>, Arc<Mutex<WebSocketBytes>>)> = None;
-        let last_args_final: Option<(Arc<Mutex<serde_json::Value>>, Arc<Mutex<Vec<u8>>>)> =
-          last_args.clone();
+        let last_args: Arc<Mutex<Option<(Arc<Mutex<WebSocketCtx>>, Arc<Mutex<WebSocketBytes>>)>>> =
+          Arc::new(Mutex::new(None));
         let logger_final: Arc<RwLock<Arc<WebSocketLogger>>> = Arc::clone(&logger_conn);
 
         let (on_connect, on_disconnect) = {
@@ -908,6 +910,7 @@ async fn acceptor(
         ));
 
         let read_task: JoinHandle<()> = {
+          let last_args_read = Arc::clone(&last_args);
           let last_read: Arc<AtomicU64> = Arc::clone(&last);
           let logger_read: Arc<RwLock<Arc<WebSocketLogger>>> = Arc::clone(&logger_conn);
           let tx_read: mpsc::Sender<Message> = tx.clone();
@@ -915,7 +918,7 @@ async fn acceptor(
           // READ TASK
           tokio::spawn(async move {
             loop {
-              match timeout(send_timeout, read.next()).await {
+              match timeout(read_timeout, read.next()).await {
                 Err(_) => {
                   if no_bytes {
                     let logger_lock: RwLockReadGuard<'_, Arc<WebSocketLogger>> =
@@ -950,8 +953,9 @@ async fn acceptor(
                             stream_handler.lock().unwrap();
                           stream_lock.set_topic(&topic);
                           stream_lock.set_compression(req.get_compression());
-                          req.reset();
                         }
+
+                        no_bytes = true;
                         {
                           let logger_lock: RwLockReadGuard<'_, Arc<WebSocketLogger>> =
                             logger_read.read().unwrap();
@@ -960,22 +964,19 @@ async fn acceptor(
                             &format!("Client {}: Sent payload: {}", addr, req.get_ctx()),
                           );
                         }
+
                         req.reset();
 
-                        no_bytes = true;
-
                         // ON CONNECT
-                        match last_args {
-                          Some(_) => {}
-                          None => {
-                            let ctx_conn: Arc<Mutex<WebSocketCtx>> = Arc::clone(&ctx_handler);
-                            let bytes_conn: Arc<Mutex<WebSocketBytes>> = Arc::clone(&bytes_handler);
-                            let stream_conn: Arc<Mutex<WebSocketStream>> = Arc::clone(&stream);
-                            last_args = Some((Arc::clone(&ctx_conn), Arc::clone(&bytes_conn)));
-                            if let Some(handler) = &on_connect {
-                              handler(ctx_conn, bytes_conn, stream_conn);
-                            }
-                          }
+                        let ctx_conn: Arc<Mutex<WebSocketCtx>> = Arc::clone(&ctx_handler);
+                        let bytes_conn: Arc<Mutex<WebSocketBytes>> = Arc::clone(&bytes_handler);
+                        let stream_conn: Arc<Mutex<WebSocketStream>> = Arc::clone(&stream);
+                        {
+                          *last_args_read.lock().unwrap() =
+                            Some((Arc::clone(&ctx_conn), Arc::clone(&bytes_conn)));
+                        }
+                        if let Some(handler) = &on_connect {
+                          handler(ctx_conn, bytes_conn, stream_conn);
                         }
 
                         let handler_opt: Option<Arc<WebSocketHandler>> = {
@@ -1012,10 +1013,12 @@ async fn acceptor(
                   }
 
                   Ok(Message::Ping(payload)) => {
+                    println!("ping");
                     let _ = tx_read.send(Message::Pong(payload)).await;
                   }
 
                   Ok(Message::Pong(_)) => {
+                    println!("pong");
                     last_read.store(
                       SystemTime::now()
                         .duration_since(UNIX_EPOCH)
@@ -1042,11 +1045,15 @@ async fn acceptor(
           let logger_write: Arc<RwLock<Arc<WebSocketLogger>>> = Arc::clone(&logger_conn);
           tokio::spawn(async move {
             while let Some(msg) = rx.recv().await {
-              if let Err(_) | Ok(Err(_)) = timeout(send_timeout, write.send(msg)).await {
-                let logger: RwLockReadGuard<'_, Arc<dyn Fn(&str, &str) + Send + Sync>> =
-                  logger_write.read().unwrap();
-                logger("warning", &format!("Client {}: Write error", addr));
-                break;
+              match timeout(send_timeout, write.send(msg)).await {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) => {}
+                Err(_) => {
+                  let logger: RwLockReadGuard<'_, Arc<WebSocketLogger>> =
+                    logger_write.read().unwrap();
+                  logger("warning", &format!("Client {}: Write timeout", addr));
+                  break;
+                }
               }
             }
 
@@ -1059,7 +1066,7 @@ async fn acceptor(
         let ping_task: JoinHandle<()> = {
           let last_pong: Arc<AtomicU64> = Arc::clone(&last);
           let opts_ping: Arc<WebSocketOpts> = Arc::clone(&opts_conn);
-          let timeout_ping: Duration = Duration::from_secs(1);
+          let timeout_ping: Duration = Duration::from_secs((*opts_conn).ping_timeout);
           let tx_ping: mpsc::Sender<Message> = tx.clone();
           tokio::spawn(async move {
             loop {
@@ -1086,16 +1093,16 @@ async fn acceptor(
 
         ping_task.abort();
         {
-          let mut map: std::sync::MutexGuard<'_, HashMap<String, u64>> = rate_limit_map_rt.lock().unwrap();
+          let mut map: std::sync::MutexGuard<'_, HashMap<String, u64>> =
+            rate_limit_map_rt.lock().unwrap();
           if let Some(entry) = map.get_mut(&ip) {
-            // Уменьшаем счётчик, но не ниже нуля
             if *entry > 0 {
               *entry -= 1;
             }
           }
         }
 
-        disconnect(&on_disconnect, &last_args_final, &opts_conn).await;
+        disconnect(&on_disconnect, &last_args, &opts_conn).await;
         let logger_lock: RwLockReadGuard<'_, Arc<WebSocketLogger>> = logger_final.read().unwrap();
         logger_lock("info", &format!("Client {}: Disconnected", addr));
       });

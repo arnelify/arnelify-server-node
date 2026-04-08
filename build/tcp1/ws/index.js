@@ -21,34 +21,34 @@ exports.WebSocketStream = exports.WebSocketServer = void 0;
 const native = require("../../../native");
 const uds_1 = require("../../ipc/uds");
 class WebSocketStream {
-    constructor(id) {
-        this.id = 0;
+    constructor(addr) {
+        this.addr = "";
         this.cb_send = async (_topic, _args, bytes) => {
             console.log(bytes);
         };
-        this.id = id;
+        this.addr = addr;
     }
     async close() {
-        const args = [this.id];
+        const args = [this.addr];
         await this.cb_send("ws_close", args, Buffer.alloc(0));
     }
     on_send(cb) {
         this.cb_send = cb;
     }
     async push(payload, bytes) {
-        const args = [this.id, payload];
+        const args = [this.addr, payload];
         await this.cb_send("ws_push", args, bytes);
     }
     async push_bytes(bytes) {
-        const args = [this.id];
+        const args = [this.addr];
         await this.cb_send("ws_push_bytes", args, bytes);
     }
     async push_json(json) {
-        const args = [this.id, json];
+        const args = [this.addr, json];
         await this.cb_send("ws_push_json", args, Buffer.alloc(0));
     }
     async set_compression(compression) {
-        const args = [this.id, compression ? compression : ""];
+        const args = [this.addr, compression ? compression : ""];
         this.cb_send("ws_set_compression", args, Buffer.alloc(0));
     }
 }
@@ -80,8 +80,8 @@ class WebSocketServer {
     on(path, cb) {
         this.handlers[path] = cb;
         this.uds.on('ws_on', async (ctx, bytes) => {
-            const [stream_id, handler_path, handler_ctx] = ctx;
-            const stream = new WebSocketStream(stream_id);
+            const [addr, handler_path, handler_ctx] = ctx;
+            const stream = new WebSocketStream(addr);
             stream.on_send(async (topic, args, buffer) => {
                 await this.uds.push(topic, args, buffer);
             });

@@ -43,19 +43,19 @@ type WebSocketCtx = Record<string, any>;
 type WebSocketBytes = Buffer;
 
 class WebSocketStream {
-  id: number = 0;
+  addr: string = "";
 
   cb_send: (topic: string, args: any[], bytes: Buffer) => Promise<void> =
     async (_topic: string, _args: any[], bytes: Buffer): Promise<void> => {
       console.log(bytes);
     };
 
-  constructor(id: number) {
-    this.id = id;
+  constructor(addr: string) {
+    this.addr = addr;
   }
 
   async close(): Promise<void> {
-    const args: any[] = [this.id];
+    const args: any[] = [this.addr];
     await this.cb_send("ws_close", args, Buffer.alloc(0));
   }
 
@@ -64,22 +64,22 @@ class WebSocketStream {
   }
 
   async push(payload: any, bytes: Buffer): Promise<void> {
-    const args: any[] = [this.id, payload];
+    const args: any[] = [this.addr, payload];
     await this.cb_send("ws_push", args, bytes);
   }
 
   async push_bytes(bytes: Buffer): Promise<void> {
-    const args: any[] = [this.id];
+    const args: any[] = [this.addr];
     await this.cb_send("ws_push_bytes", args, bytes);
   }
 
   async push_json(json: any): Promise<void> {
-    const args: any[] = [this.id, json];
+    const args: any[] = [this.addr, json];
     await this.cb_send("ws_push_json", args, Buffer.alloc(0));
   }
 
   async set_compression(compression: null | string): Promise<void> {
-    const args: any[] = [this.id, compression ? compression : ""];
+    const args: any[] = [this.addr, compression ? compression : ""];
     this.cb_send("ws_set_compression", args, Buffer.alloc(0));
   }
 }
@@ -122,9 +122,9 @@ class WebSocketServer {
     this.handlers[path] = cb;
 
     this.uds.on('ws_on', async (ctx: UnixDomainSocketCtx, bytes: UnixDomainSocketBytes): Promise<void> => {
-      const [stream_id, handler_path, handler_ctx] = ctx;
+      const [addr, handler_path, handler_ctx] = ctx;
 
-      const stream = new WebSocketStream(stream_id);
+      const stream = new WebSocketStream(addr);
       stream.on_send(async (topic, args, buffer): Promise<void> => {
         await this.uds.push(topic, args, buffer);
       });

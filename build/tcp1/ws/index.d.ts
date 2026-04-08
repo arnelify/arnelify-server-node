@@ -13,9 +13,9 @@ type WebSocketOpts = {
 type WebSocketCtx = Record<string, any>;
 type WebSocketBytes = Buffer;
 declare class WebSocketStream {
-    id: number;
+    addr: string;
     cb_send: (topic: string, args: any[], bytes: Buffer) => Promise<void>;
-    constructor(id: number);
+    constructor(addr: string);
     close(): Promise<void>;
     on_send(cb: (topic: string, args: any[], bytes: Buffer) => Promise<void>): void;
     push(payload: any, bytes: Buffer): Promise<void>;
