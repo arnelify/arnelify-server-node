@@ -113,7 +113,7 @@ impl WebSocketReq {
           "method": "GET",
           "path": "/",
           "protocol": "WebSocket",
-          "topic": JSON::Null
+          "topic": "_"
         },
         "params": {
           "files": {},
@@ -810,7 +810,6 @@ async fn acceptor(
         }
 
         let mut ip: String = String::from("_");
-        let mut no_bytes: bool = true;
         let last_args: Arc<Mutex<Option<(Arc<Mutex<WebSocketCtx>>, Arc<Mutex<WebSocketBytes>>)>>> =
           Arc::new(Mutex::new(None));
         let logger_final: Arc<RwLock<Arc<WebSocketLogger>>> = Arc::clone(&logger_conn);
@@ -836,7 +835,6 @@ async fn acceptor(
             const SERVER: http::HeaderValue = http::HeaderValue::from_static("Arnelify Server");
             http_res.headers_mut().insert("Server", SERVER);
             let mut buff: Vec<u8> = Vec::new();
-            no_bytes = false;
 
             let location: &str = http_req
               .uri()
@@ -896,7 +894,12 @@ async fn acceptor(
           }
         };
 
-        {
+        if let Some(handler) = &on_connect {
+          let ctx_conn: Arc<Mutex<WebSocketCtx>> = Arc::new(Mutex::new(req.get_ctx()));
+          let bytes_conn: Arc<Mutex<WebSocketBytes>> = Arc::new(Mutex::new(Vec::new()));
+          let stream_conn: Arc<Mutex<WebSocketStream>> = Arc::clone(&stream);
+          handler(ctx_conn, bytes_conn, stream_conn);
+
           let logger_lock: RwLockReadGuard<'_, Arc<WebSocketLogger>> = logger_conn.read().unwrap();
           (logger_lock)("info", &format!("Client {}: Connected", addr));
         }
@@ -918,27 +921,10 @@ async fn acceptor(
           // READ TASK
           tokio::spawn(async move {
             loop {
-              match timeout(read_timeout, read.next()).await {
-                Err(_) => {
-                  if no_bytes {
-                    let logger_lock: RwLockReadGuard<'_, Arc<WebSocketLogger>> =
-                      logger_read.read().unwrap();
-                    logger_lock("info", &format!("Client {}: Keep-alive timeout", addr));
-                    break;
-                  }
-
-                  let logger_lock: RwLockReadGuard<'_, Arc<WebSocketLogger>> =
-                    logger_read.read().unwrap();
-                  logger_lock("warning", &format!("Client {}: Read timeout", addr));
-                  break;
-                }
-                Ok(None) => {
-                  break;
-                }
-                Ok(Some(msg)) => match msg {
+              match read.next().await {
+                Some(msg) => match msg {
                   Ok(Message::Binary(bytes)) => {
                     req.add(&bytes);
-                    no_bytes = false;
 
                     match req.read_block() {
                       Ok(Some(_)) => {
@@ -955,7 +941,6 @@ async fn acceptor(
                           stream_lock.set_compression(req.get_compression());
                         }
 
-                        no_bytes = true;
                         {
                           let logger_lock: RwLockReadGuard<'_, Arc<WebSocketLogger>> =
                             logger_read.read().unwrap();
@@ -967,16 +952,11 @@ async fn acceptor(
 
                         req.reset();
 
-                        // ON CONNECT
-                        let ctx_conn: Arc<Mutex<WebSocketCtx>> = Arc::clone(&ctx_handler);
-                        let bytes_conn: Arc<Mutex<WebSocketBytes>> = Arc::clone(&bytes_handler);
-                        let stream_conn: Arc<Mutex<WebSocketStream>> = Arc::clone(&stream);
+                        // SAVE LAST ARGS FOR DISCONNECT
+                        let ctx_last: Arc<Mutex<WebSocketCtx>> = Arc::clone(&ctx_handler);
+                        let bytes_last: Arc<Mutex<WebSocketBytes>> = Arc::clone(&bytes_handler);
                         {
-                          *last_args_read.lock().unwrap() =
-                            Some((Arc::clone(&ctx_conn), Arc::clone(&bytes_conn)));
-                        }
-                        if let Some(handler) = &on_connect {
-                          handler(ctx_conn, bytes_conn, stream_conn);
+                          *last_args_read.lock().unwrap() = Some((ctx_last, bytes_last));
                         }
 
                         let handler_opt: Option<Arc<WebSocketHandler>> = {
@@ -1013,12 +993,10 @@ async fn acceptor(
                   }
 
                   Ok(Message::Ping(payload)) => {
-                    println!("ping");
                     let _ = tx_read.send(Message::Pong(payload)).await;
                   }
 
                   Ok(Message::Pong(_)) => {
-                    println!("pong");
                     last_read.store(
                       SystemTime::now()
                         .duration_since(UNIX_EPOCH)
@@ -1035,6 +1013,7 @@ async fn acceptor(
                   Err(_) => break,
                   _ => {}
                 },
+                None => break,
               }
             }
           })
@@ -1099,6 +1078,10 @@ async fn acceptor(
             if *entry > 0 {
               *entry -= 1;
             }
+
+            if *entry == 0 {
+              map.remove(&ip);
+            }
           }
         }
 
@@ -1108,7 +1091,8 @@ async fn acceptor(
       });
     }
     Err(e) => {
-      eprintln!("Accept error: {}", e);
+      let logger_lock: RwLockReadGuard<'_, Arc<WebSocketLogger>> = logger_conn.read().unwrap();
+      logger_lock("warning", &format!("Acceptor error: {}", e));
       return;
     }
   }

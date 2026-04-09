@@ -167,7 +167,7 @@ impl Http3Req {
           "method": "GET",
           "path": "/",
           "protocol": "HTTP/3.0",
-          "topic": JSON::Null
+          "topic": "_"
         },
         "params": {
           "files": {},
@@ -1272,7 +1272,7 @@ impl Http3Req {
         "method": "GET",
         "path": "/",
         "protocol": "HTTP/2.0",
-        "topic": JSON::Null
+        "topic": "_"
       },
       "params": {
         "files": {},

@@ -101,7 +101,7 @@ impl WebTransportReq {
           "method": JSON::Null,
           "path": JSON::Null,
           "protocol": "WebTransport",
-          "topic": JSON::Null
+          "topic": "_"
         },
         "params": {
           "files": {},
@@ -280,7 +280,7 @@ impl WebTransportReq {
         "method": JSON::Null,
         "path": JSON::Null,
         "protocol": "WebTransport",
-        "topic": JSON::Null
+        "topic": "_"
       },
       "params": {
         "files": {},

@@ -150,7 +150,7 @@ impl Http1Req {
           "method": "GET",
           "path": "/",
           "protocol": "HTTP/1.1",
-          "topic": JSON::Null,
+          "topic": "_"
         },
         "params": {
           "files": {},
@@ -1306,7 +1306,7 @@ impl Http1Req {
         "method": "GET",
         "path": "/",
         "protocol": "HTTP/1.1",
-        "topic": JSON::Null
+        "topic": "_"
       },
       "params": {
         "files": {},

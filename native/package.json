@@ -1,6 +1,6 @@
 {
   "name": "arnelify-server",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Multi-language server with HTTP 3.0 and WebTransport support.",
   "author": "Arnelify",
   "license": "MIT",
